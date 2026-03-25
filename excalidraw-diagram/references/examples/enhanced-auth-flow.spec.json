@@ -1,0 +1,78 @@
+{
+  "title": "Authentication Flow",
+  "subtitle": "Dynamic diagram | Browser login path",
+  "diagram_kind": "dynamic",
+  "layout": "flow",
+  "direction": "vertical",
+  "scope": "ExcaliClaude sample",
+  "show_legend": true,
+  "groups": [
+    { "id": "client", "label": "Client" },
+    { "id": "edge", "label": "Edge" },
+    { "id": "services", "label": "Application" },
+    { "id": "data", "label": "Data" }
+  ],
+  "nodes": [
+    {
+      "id": "browser",
+      "label": "Browser",
+      "role": "client",
+      "group": "client",
+      "node_type": "Client",
+      "technology": "Web app",
+      "description": "Starts the sign-in request",
+      "order": 1
+    },
+    {
+      "id": "lb",
+      "label": "Load Balancer",
+      "role": "api",
+      "group": "edge",
+      "node_type": "Gateway",
+      "technology": "NGINX",
+      "description": "Routes public traffic",
+      "order": 2
+    },
+    {
+      "id": "auth",
+      "label": "Auth Service",
+      "role": "service",
+      "group": "services",
+      "node_type": "Container",
+      "technology": "ASP.NET Core",
+      "description": "Validates credentials and issues sessions",
+      "order": 3
+    },
+    {
+      "id": "user-db",
+      "label": "User DB",
+      "role": "database",
+      "group": "data",
+      "node_type": "Database",
+      "technology": "PostgreSQL",
+      "description": "Stores user accounts",
+      "order": 4
+    },
+    {
+      "id": "session-cache",
+      "label": "Session Cache",
+      "role": "database",
+      "group": "data",
+      "node_type": "Cache",
+      "technology": "Redis",
+      "description": "Stores active sessions",
+      "order": 5
+    }
+  ],
+  "edges": [
+    { "from": "browser", "to": "lb", "sequence": 1, "label": "POST /login", "kind": "sync" },
+    { "from": "lb", "to": "auth", "sequence": 2, "label": "Forward request", "kind": "sync" },
+    { "from": "auth", "to": "user-db", "sequence": 3, "label": "Read user", "kind": "read" },
+    { "from": "auth", "to": "session-cache", "sequence": 4, "label": "Write session", "kind": "write" }
+  ],
+  "notes": [
+    {
+      "text": "Use labelled arrows and node descriptions so the diagram explains the flow without a separate walkthrough."
+    }
+  ]
+}
