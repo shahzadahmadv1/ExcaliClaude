@@ -38,6 +38,8 @@
 
 ExcaliClaude is a [Claude Code](https://claude.ai/claude-code) skill that turns natural language descriptions into polished Excalidraw architecture and flow diagrams using a spec-first generation pipeline.
 
+The checked-in skill entrypoint is `excalidraw-diagram/SKILL.md`, matching current Claude skill conventions.
+
 Instead of asking Claude to hand-author raw Excalidraw geometry, the skill now:
 
 1. explores the codebase when the flow exists in code
@@ -266,7 +268,7 @@ Edit `excalidraw-diagram/references/diagram-spec.md` if you want to change the s
 
 ### Output location
 
-The default output location is `docs/diagrams/` with specs in `docs/diagrams/specs/`. To change this, update the save paths in `excalidraw-diagram/skill.md`.
+The default output location is `docs/diagrams/` with specs in `docs/diagrams/specs/`. To change this, update the save paths in `excalidraw-diagram/SKILL.md`.
 
 ### Layout heuristics
 
@@ -297,7 +299,7 @@ Layout behavior is intentionally handled by the builder rather than the prompt:
 ```text
 ExcaliClaude/
 |-- excalidraw-diagram/
-|   |-- skill.md
+|   |-- SKILL.md
 |   `-- references/
 |       |-- build_excalidraw_diagram.py
 |       |-- render_excalidraw.py
@@ -313,6 +315,7 @@ ExcaliClaude/
 |           `-- architecture.excalidraw
 |-- docs/
 |   |-- diagrams/
+|   |-- evals/
 |   |-- research/
 |   `-- superpowers/
 |-- LICENSE
@@ -400,6 +403,8 @@ The scripts work standalone. The prompt workflow is designed for Claude Code.
 Contributions are welcome! Whether it's a bug report, feature idea, documentation fix, or new diagram layout — we'd love your help.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for full details on how to get started, test changes, and submit a pull request.
+
+When changing the Claude skill prompt, run the manual evaluation matrix in `docs/evals/skill-evaluation-matrix.md`.
 
 Quick version:
 

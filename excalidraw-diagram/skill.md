@@ -1,6 +1,6 @@
 ---
 name: excalidraw-diagram
-description: Generate Excalidraw diagrams for architecture and existing-code flows. Use when the user asks to explain, visualize, or draw a system, request path, runtime interaction, or codebase-backed flow. Explore the codebase when needed, write a structured diagram spec first, then build polished .excalidraw output with validation and preview rendering.
+description: Generates Excalidraw diagrams for architecture and existing-code flows. Use when the user asks to explain, visualize, or draw a system, request path, runtime interaction, or codebase-backed flow. Explores the codebase when needed, writes a structured diagram spec first, then builds polished .excalidraw output with validation and preview rendering.
 ---
 
 # Excalidraw Diagram Generator

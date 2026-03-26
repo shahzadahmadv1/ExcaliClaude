@@ -27,9 +27,11 @@ Thanks for your interest in contributing! This project welcomes contributions of
 
 ## Making Changes
 
-### Skill prompt (`skill.md`)
+### Skill prompt (`SKILL.md`)
 
 This is the main instruction file Claude reads. Changes here affect how Claude approaches diagram generation. Test any prompt changes by generating a few different diagram types and checking the output quality.
+
+When you change the prompt logic, also run through the manual evaluation matrix in `docs/evals/skill-evaluation-matrix.md`.
 
 ### Builder script (`build_excalidraw_diagram.py`)
 
