@@ -1,0 +1,143 @@
+{
+  "title": "Payment System",
+  "model": {
+    "entities": [
+      {
+        "id": "browser",
+        "label": "Browser",
+        "role": "client",
+        "group": "client",
+        "node_type": "Client",
+        "technology": "Web app",
+        "description": "Starts the checkout flow",
+        "order": 1,
+        "evidence_source": "code",
+        "confidence": "high"
+      },
+      {
+        "id": "api-gateway",
+        "label": "API Gateway",
+        "role": "api",
+        "group": "edge",
+        "node_type": "Gateway",
+        "technology": "NGINX",
+        "description": "Routes public traffic",
+        "order": 2,
+        "evidence_source": "code",
+        "confidence": "high"
+      },
+      {
+        "id": "payment-service",
+        "label": "Payment Service",
+        "role": "service",
+        "group": "services",
+        "node_type": "Container",
+        "technology": "Node.js",
+        "description": "Orchestrates payment processing",
+        "order": 3,
+        "evidence_source": "code",
+        "confidence": "high"
+      },
+      {
+        "id": "fraud-check",
+        "label": "Fraud Checker",
+        "role": "service",
+        "group": "services",
+        "node_type": "Container",
+        "technology": "Python",
+        "description": "Evaluates transaction risk",
+        "order": 4,
+        "evidence_source": "code",
+        "confidence": "medium"
+      },
+      {
+        "id": "stripe",
+        "label": "Stripe API",
+        "role": "external",
+        "group": "external",
+        "node_type": "External",
+        "technology": "REST",
+        "description": "Processes card charges",
+        "order": 5,
+        "evidence_source": "user-specified",
+        "confidence": "high"
+      },
+      {
+        "id": "order-db",
+        "label": "Order DB",
+        "role": "database",
+        "group": "data",
+        "node_type": "Database",
+        "technology": "PostgreSQL",
+        "description": "Stores orders and payment records",
+        "order": 6,
+        "evidence_source": "code",
+        "confidence": "high"
+      },
+      {
+        "id": "event-bus",
+        "label": "Event Bus",
+        "role": "infrastructure",
+        "group": "infra",
+        "node_type": "Queue",
+        "technology": "RabbitMQ",
+        "description": "Publishes payment events",
+        "order": 7,
+        "evidence_source": "inferred",
+        "confidence": "medium"
+      }
+    ],
+    "relationships": [
+      { "from": "browser", "to": "api-gateway", "label": "POST /checkout", "kind": "sync", "sequence": 1, "evidence_source": "code", "confidence": "high" },
+      { "from": "api-gateway", "to": "payment-service", "label": "Forward request", "kind": "sync", "sequence": 2, "evidence_source": "code", "confidence": "high" },
+      { "from": "payment-service", "to": "fraud-check", "label": "Evaluate risk", "kind": "sync", "sequence": 3, "evidence_source": "code", "confidence": "medium" },
+      { "from": "payment-service", "to": "stripe", "label": "Charge card", "kind": "sync", "sequence": 4, "evidence_source": "user-specified", "confidence": "high" },
+      { "from": "payment-service", "to": "order-db", "label": "Write order", "kind": "write", "sequence": 5, "evidence_source": "code", "confidence": "high" },
+      { "from": "payment-service", "to": "event-bus", "label": "Publish event", "kind": "async", "sequence": 6, "evidence_source": "inferred", "confidence": "medium" }
+    ],
+    "detail_level": "standard",
+    "audience": "technical"
+  },
+  "views": [
+    {
+      "view_id": "overview",
+      "view_mode": "overview",
+      "title": "Payment System Overview",
+      "diagram_kind": "architecture",
+      "layout": "layers",
+      "show_legend": true,
+      "groups": [
+        { "id": "client", "label": "Client" },
+        { "id": "edge", "label": "Edge" },
+        { "id": "services", "label": "Services" },
+        { "id": "external", "label": "External" },
+        { "id": "data", "label": "Data" },
+        { "id": "infra", "label": "Infrastructure" }
+      ],
+      "notes": [
+        { "text": "Overview of all payment system components and their primary relationships." }
+      ]
+    },
+    {
+      "view_id": "checkout-flow",
+      "view_mode": "focused-flow",
+      "title": "Checkout Flow",
+      "subtitle": "Dynamic diagram | Browser checkout path",
+      "diagram_kind": "dynamic",
+      "layout": "flow",
+      "direction": "vertical",
+      "show_legend": true,
+      "entity_ids": ["browser", "api-gateway", "payment-service", "fraud-check", "stripe", "order-db"],
+      "groups": [
+        { "id": "client", "label": "Client" },
+        { "id": "edge", "label": "Edge" },
+        { "id": "services", "label": "Application" },
+        { "id": "external", "label": "External" },
+        { "id": "data", "label": "Data" }
+      ],
+      "notes": [
+        { "text": "Focused flow showing the checkout request path from browser to payment completion." }
+      ]
+    }
+  ]
+}

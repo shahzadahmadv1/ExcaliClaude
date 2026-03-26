@@ -1,0 +1,233 @@
+{
+  "title": "User Authentication System",
+  "model": {
+    "entities": [
+      {
+        "id": "spa",
+        "label": "Single Page App",
+        "role": "client",
+        "group": "frontend",
+        "node_type": "Client",
+        "technology": "React",
+        "description": "User-facing login and dashboard",
+        "order": 1,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "frontend-team",
+        "boundary": "internal",
+        "runtime": "browser"
+      },
+      {
+        "id": "cdn",
+        "label": "CDN",
+        "role": "infrastructure",
+        "group": "edge",
+        "node_type": "Infrastructure",
+        "technology": "CloudFront",
+        "description": "Serves static assets and caches public responses",
+        "order": 2,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "platform-team",
+        "boundary": "internal",
+        "runtime": "aws"
+      },
+      {
+        "id": "api-gw",
+        "label": "API Gateway",
+        "role": "api",
+        "group": "edge",
+        "node_type": "Gateway",
+        "technology": "NGINX",
+        "description": "TLS termination and route dispatch",
+        "order": 3,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "platform-team",
+        "boundary": "internal",
+        "runtime": "kubernetes"
+      },
+      {
+        "id": "auth-service",
+        "label": "Auth Service",
+        "role": "service",
+        "group": "services",
+        "node_type": "Container",
+        "technology": "ASP.NET Core",
+        "description": "Handles login, registration, token issuance",
+        "order": 4,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "identity-team",
+        "boundary": "internal",
+        "runtime": "kubernetes"
+      },
+      {
+        "id": "mfa-service",
+        "label": "MFA Service",
+        "role": "service",
+        "group": "services",
+        "node_type": "Container",
+        "technology": "Node.js",
+        "description": "Generates and validates TOTP and SMS codes",
+        "order": 5,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "identity-team",
+        "boundary": "internal",
+        "runtime": "kubernetes"
+      },
+      {
+        "id": "user-service",
+        "label": "User Service",
+        "role": "service",
+        "group": "services",
+        "node_type": "Container",
+        "technology": "ASP.NET Core",
+        "description": "Manages user profiles and preferences",
+        "order": 6,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "identity-team",
+        "boundary": "internal",
+        "runtime": "kubernetes"
+      },
+      {
+        "id": "user-db",
+        "label": "User DB",
+        "role": "database",
+        "group": "data",
+        "node_type": "Database",
+        "technology": "PostgreSQL",
+        "description": "Stores user accounts and credentials",
+        "order": 7,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "identity-team",
+        "boundary": "internal",
+        "runtime": "rds"
+      },
+      {
+        "id": "session-cache",
+        "label": "Session Cache",
+        "role": "database",
+        "group": "data",
+        "node_type": "Cache",
+        "technology": "Redis",
+        "description": "Stores active sessions and rate-limit counters",
+        "order": 8,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "platform-team",
+        "boundary": "internal",
+        "runtime": "elasticache"
+      },
+      {
+        "id": "idp",
+        "label": "External IdP",
+        "role": "external",
+        "group": "external",
+        "node_type": "External",
+        "technology": "OIDC / SAML",
+        "description": "Federated identity providers (Google, Okta)",
+        "order": 9,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "unknown",
+        "boundary": "external",
+        "runtime": "saas"
+      },
+      {
+        "id": "sms-provider",
+        "label": "SMS Provider",
+        "role": "external",
+        "group": "external",
+        "node_type": "External",
+        "technology": "Twilio API",
+        "description": "Sends MFA codes via SMS",
+        "order": 10,
+        "evidence_source": "code",
+        "confidence": "medium",
+        "owner": "unknown",
+        "boundary": "external",
+        "runtime": "saas"
+      }
+    ],
+    "relationships": [
+      { "from": "spa", "to": "cdn", "label": "Load app", "kind": "sync", "evidence_source": "code", "confidence": "high" },
+      { "from": "spa", "to": "api-gw", "label": "API calls", "kind": "sync", "evidence_source": "code", "confidence": "high" },
+      { "from": "api-gw", "to": "auth-service", "label": "Route /auth", "kind": "sync", "evidence_source": "code", "confidence": "high" },
+      { "from": "api-gw", "to": "user-service", "label": "Route /users", "kind": "sync", "evidence_source": "code", "confidence": "high" },
+      { "from": "auth-service", "to": "user-db", "label": "Verify credentials", "kind": "read", "evidence_source": "code", "confidence": "high" },
+      { "from": "auth-service", "to": "session-cache", "label": "Create session", "kind": "write", "evidence_source": "code", "confidence": "high" },
+      { "from": "auth-service", "to": "mfa-service", "label": "Request MFA challenge", "kind": "sync", "evidence_source": "code", "confidence": "high" },
+      { "from": "auth-service", "to": "idp", "label": "Federated SSO", "kind": "sync", "evidence_source": "code", "confidence": "high" },
+      { "from": "mfa-service", "to": "sms-provider", "label": "Send SMS code", "kind": "async", "evidence_source": "code", "confidence": "medium" },
+      { "from": "user-service", "to": "user-db", "label": "Read/write profiles", "kind": "write", "evidence_source": "code", "confidence": "high" }
+    ],
+    "detail_level": "standard",
+    "audience": "technical"
+  },
+  "views": [
+    {
+      "view_id": "auth-overview",
+      "view_mode": "overview",
+      "title": "Auth System Overview",
+      "diagram_kind": "architecture",
+      "layout": "layers",
+      "show_legend": true,
+      "groups": [
+        { "id": "frontend", "label": "Frontend" },
+        { "id": "edge", "label": "Edge" },
+        { "id": "services", "label": "Services" },
+        { "id": "data", "label": "Data" },
+        { "id": "external", "label": "External" }
+      ],
+      "notes": [
+        { "text": "Overview of all authentication system components and their primary relationships." }
+      ]
+    },
+    {
+      "view_id": "login-flow",
+      "view_mode": "focused-flow",
+      "title": "Login Flow",
+      "subtitle": "Dynamic diagram | User login with MFA",
+      "diagram_kind": "dynamic",
+      "layout": "flow",
+      "direction": "vertical",
+      "show_legend": true,
+      "entity_ids": ["spa", "api-gw", "auth-service", "mfa-service", "user-db", "session-cache", "sms-provider"],
+      "groups": [
+        { "id": "frontend", "label": "Client" },
+        { "id": "edge", "label": "Edge" },
+        { "id": "services", "label": "Application" },
+        { "id": "data", "label": "Data" },
+        { "id": "external", "label": "External" }
+      ],
+      "notes": [
+        { "text": "Focused flow: user submits credentials, auth service validates, MFA challenge issued, session created." }
+      ]
+    },
+    {
+      "view_id": "sso-flow",
+      "view_mode": "focused-flow",
+      "title": "SSO Federation Flow",
+      "subtitle": "Dynamic diagram | External IdP login path",
+      "diagram_kind": "dynamic",
+      "layout": "flow",
+      "direction": "vertical",
+      "show_legend": true,
+      "entity_ids": ["spa", "api-gw", "auth-service", "idp", "user-db", "session-cache"],
+      "groups": [
+        { "id": "frontend", "label": "Client" },
+        { "id": "edge", "label": "Edge" },
+        { "id": "services", "label": "Application" },
+        { "id": "data", "label": "Data" },
+        { "id": "external", "label": "External" }
+      ],
+      "notes": [
+        { "text": "Focused flow: user initiates SSO, redirected to IdP, token exchanged, session created." }
+      ]
+    }
+  ]
+}

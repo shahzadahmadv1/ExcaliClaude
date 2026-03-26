@@ -25,6 +25,8 @@ Activate when the user asks to create, explain with, visualize, or draw:
 - a runtime interaction
 - an existing code path
 - a service/system overview
+- a multi-view or scenario pack
+- a drill-down into a specific service or phase
 
 Examples:
 
@@ -32,6 +34,8 @@ Examples:
 - "Draw the payment processing path"
 - "Visualize the customer acquisition architecture"
 - "Show me how this service talks to Redis and Postgres"
+- "Give me an overview and then a detailed flow for the checkout"
+- "Draw an architecture overview plus a drill-down of the auth service"
 
 ## Codebase Discovery
 
@@ -56,19 +60,67 @@ Examples:
 4. Use the discovered components and flow sequence as the source of truth.
 5. If no useful codebase evidence is found, fall back to a conceptual diagram and state that clearly.
 
+## View Modes
+
+Choose one of these view modes for each diagram request:
+
+- **`overview`** — High-level system map showing all major entities with minimal internal detail. Use for "what exists" questions.
+- **`focused-flow`** — A single runtime or request path through the system. Use for "what happens when" questions.
+- **`drill-down`** — Detailed view of one service, phase, or subsystem. Use for "how does X work internally" questions.
+- **`scenario-pack`** — Emits an overview plus one or more focused/drill-down views as separate artifacts. Use for comprehensive documentation or when the user asks for both overview and detail.
+
+### Mode Selection Guidance
+
+| User intent | View mode |
+|---|---|
+| "Show me the whole system" | `overview` |
+| "What happens when a user logs in?" | `focused-flow` |
+| "How does the auth service work internally?" | `drill-down` |
+| "Document the payment system end to end" | `scenario-pack` |
+| "Give me an overview and detail" | `scenario-pack` |
+
+If the user does not specify a mode, infer it from context. Default to `focused-flow` for flow/path questions and `overview` for architecture/system questions.
+
+## Scope Controls
+
+These controls shape what the diagram includes and how it is presented. Set them in the shared model when building the spec.
+
+| Control | Values | Default | Purpose |
+|---|---|---|---|
+| `detail_level` | `minimal`, `standard`, `detailed` | `standard` | How much metadata to surface (descriptions, technology, evidence) |
+| `audience` | `technical`, `executive`, `mixed` | `technical` | Influences label verbosity and abstraction level |
+| `scope_filter` | entity ids or group names | all | Limit views to a subset of the model |
+| `max_nodes` | integer | none | Advisory node budget per view; triggers auto-split when exceeded |
+
+### Auto-Split Rules
+
+- If a view would exceed `max_nodes` (or ~15 nodes when unset), split into overview + detail artifacts automatically.
+- When auto-splitting, emit an overview first, then one detail artifact per dense group or phase.
+- Use a base stem like `{date}-{topic}-{shortid}` so multiple runs on the same day do not overwrite each other.
+
+### Drill-Down Continuity
+
+- Overview diagrams should use entity ids that detail diagrams can reference.
+- When emitting a scenario pack, share the same model across all views so entity names and ids are consistent.
+- Report which overview entities have corresponding drill-down views in the final output.
+
 ## Diagram Selection
 
-Read `references/diagram-quality-bar.md` before choosing the diagram.
+Read `references/diagram-quality-bar.md` before choosing the diagram kind.
 
-Use a C4-inspired level:
+Use a C4-inspired level within each view:
 
 - `dynamic` for request paths, runtime flows, and "what happens when" explanations
 - `container` for service/application composition
 - `component` for internals of a specific service/container
 - `context` for high-level system boundaries
 - `architecture` for broad layered overviews that do not fit neatly into one C4 level
+- `deployment` for infrastructure and deployment topology
+- `data-flow` for data or event movement through the system
+- `trust-boundary` for security zones and trust perimeters
+- `dependency-map` for static service or package dependencies
 
-If the user asks for multiple levels at once, generate the higher-level overview first and offer a follow-up detail diagram.
+If the user asks for multiple levels at once, use `scenario-pack` mode to generate the higher-level overview first plus detail views.
 
 ## Required References
 
@@ -80,33 +132,57 @@ Read these before writing the spec:
 
 Use these as examples when helpful:
 
-- `references/examples/enhanced-auth-flow.spec.json`
+- `references/examples/enhanced-auth-flow.spec.json` — legacy single-view sample
+- `references/examples/multi-view-auth.spec.json` — multi-view model sample
+- `references/examples/overview-example.spec.json` — overview view mode
+- `references/examples/focused-flow-example.spec.json` — focused-flow view mode
+- `references/examples/drill-down-example.spec.json` — drill-down view mode
+- `references/examples/scenario-pack-example.spec.json` — scenario-pack with evidence metadata
 - `references/examples/simple-flow.excalidraw`
 - `references/examples/architecture.excalidraw`
 
 ## Generation Process
 
-### Step 1: Decide The Smallest Useful Diagram
+### Step 1: Choose View Mode And Scope
 
-Keep the diagram focused on one primary question.
+Determine the view mode from the user's intent (see View Modes above). Set scope controls:
 
-- For flows, show one main narrative.
-- For architectures, show one abstraction level at a time.
-- If the canvas would need more than about 10 primary nodes, split into overview + detail diagrams.
+- Pick `detail_level` and `audience` based on context.
+- Set `max_nodes` if the system is large or the user wants a focused view.
+- Set `scope_filter` if the user names specific services or phases.
+- For `scenario-pack`, plan which views to include before writing the spec.
 
-### Step 2: Build A Semantic Diagram Spec
+### Step 2: Build A Shared Model
 
-Write a JSON spec first. Do not start with raw Excalidraw coordinates.
+Build one semantic model that captures all entities and relationships relevant to the request. This model is the single source of truth — all views derive from it.
 
-The spec must include:
+The model must include:
 
-- `title`
-- `diagram_kind`
-- `layout`
-- `direction` for flow diagrams
+- `title` — system or project title
+- `model.entities` — all components with ids, labels, roles, and groups
+- `model.relationships` — all connections with labels and kinds
+- Scope controls: `detail_level`, `audience`, `scope_filter`, `max_nodes` as needed
+
+When discovery was performed, include evidence metadata on entities and relationships:
+
+- `evidence_source`: `code`, `inferred`, or `user-specified`
+- `confidence`: `high`, `medium`, or `low`
+- `owner`, `boundary`, `runtime` when known
+
+### Step 3: Define Views
+
+Add one or more views to the `views` array. Each view selects from the shared model.
+
+Each view must include:
+
+- `view_id` — unique identifier for artifact naming
+- `view_mode` — `overview`, `focused-flow`, `drill-down`, or `scenario-pack`
+- `diagram_kind` — the abstraction level
+- `layout` and `direction` for flow diagrams
 - ordered `groups`
-- `nodes`
-- `edges`
+- `entity_ids` — subset of model entities to include (null means all)
+
+For single-view requests, you may use the legacy single-view format (flat `nodes`/`edges` without `model`/`views`). The builder supports both.
 
 Quality rules:
 
@@ -116,7 +192,7 @@ Quality rules:
 - Use `sequence` on the main interactions in dynamic diagrams.
 - Use `shape: "decision"` only for meaningful branches.
 
-### Step 3: Save The Spec
+### Step 4: Save The Spec
 
 Create:
 
@@ -127,20 +203,20 @@ mkdir -p docs/diagrams/specs
 Save the spec to:
 
 ```text
-docs/diagrams/specs/<date>-<topic>.diagram.json
+docs/diagrams/specs/<date>-<topic>-<shortid>.diagram.json
 ```
 
-### Step 4: Build The Excalidraw File
+### Step 5: Build The Excalidraw File
 
 Run:
 
 ```bash
-python <skill-dir>/references/build_excalidraw_diagram.py <spec-file> --output docs/diagrams/<date>-<topic>.excalidraw
+python <skill-dir>/references/build_excalidraw_diagram.py <spec-file> --output docs/diagrams/<date>-<topic>-<shortid>.excalidraw
 ```
 
 The builder handles layout, containers, legends, node sizing, and arrow label placement.
 
-### Step 5: Validate Structure
+### Step 6: Validate Structure
 
 Run:
 
@@ -150,7 +226,7 @@ python <skill-dir>/references/validate_excalidraw.py <diagram-file>
 
 If validation fails, fix the spec first and rebuild. Do not hand-edit raw JSON unless the problem is obviously builder-specific.
 
-### Step 6: Render Preview
+### Step 7: Render Preview
 
 Run:
 
@@ -163,7 +239,7 @@ If Playwright or browser rendering is unavailable:
 - keep the `.excalidraw` file
 - tell the user preview rendering was skipped
 
-### Step 7: Visual Review
+### Step 8: Visual Review
 
 Check the preview for:
 
@@ -175,14 +251,17 @@ Check the preview for:
 
 If the diagram is weak, edit the spec and rebuild. Prefer spec changes over raw JSON tweaks.
 
-### Step 8: Done
+### Step 9: Done
 
 Report:
 
-- the `.excalidraw` path
+- the `.excalidraw` path(s) — list all artifacts when multiple views were generated
 - the spec path
 - the preview path if rendering succeeded
+- the view mode used
 - whether the diagram is codebase-accurate or conceptual
+- for multi-view output: which overview entities have drill-down views available
+- evidence summary: how many entities are code-derived, inferred, or user-specified
 
 ## Constraints
 
@@ -198,14 +277,15 @@ Report:
 
 If the discovered flow is too large for one readable diagram:
 
-1. create an overview diagram for the phase/story
-2. create detail diagrams for the densest phase or service
+1. Use `scenario-pack` mode to emit an overview plus detail views.
+2. Or set `max_nodes` in the model to trigger auto-split.
+3. The compiler will split large models into overview + detail artifacts with deterministic naming.
 
-Use suffixes such as:
+Artifact naming for multi-view output:
 
-- `<date>-<topic>-overview.excalidraw`
-- `<date>-<topic>-phase-1.excalidraw`
-- `<date>-<topic>-component-detail.excalidraw`
+- `{output_stem}-{view_id}.excalidraw` for each view
+- Single-view output uses the `--output` path directly
+- If the requested output path already exists, the builder appends a short unique suffix automatically to avoid overwriting artifacts
 
 ### Iteration Rule
 

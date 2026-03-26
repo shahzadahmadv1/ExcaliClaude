@@ -9,6 +9,7 @@ import json
 import re
 import sys
 import textwrap
+import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,6 +24,15 @@ ROLE_STYLES = {
     "external": {"fill": "#f3e5f5", "stroke": "#8e24aa", "label": "External / 3rd Party"},
     "infrastructure": {"fill": "#eceff1", "stroke": "#546e7a", "label": "Infrastructure"},
     "decision": {"fill": "#FFF3BF", "stroke": "#F59F00", "label": "Decision / Branch"},
+    "host": {"fill": "#e0f2f1", "stroke": "#00897b", "label": "Host / VM / Node"},
+    "container-runtime": {"fill": "#e8eaf6", "stroke": "#3949ab", "label": "Container Runtime"},
+    "network": {"fill": "#fff8e1", "stroke": "#f9a825", "label": "Network / Zone"},
+    "queue": {"fill": "#fce4ec", "stroke": "#ad1457", "label": "Queue / Stream"},
+    "topic": {"fill": "#f3e5f5", "stroke": "#7b1fa2", "label": "Topic / Channel"},
+    "trust-zone": {"fill": "#e8f5e9", "stroke": "#2e7d32", "label": "Trusted Zone"},
+    "untrusted-zone": {"fill": "#ffebee", "stroke": "#c62828", "label": "Untrusted Zone"},
+    "dmz": {"fill": "#fff3e0", "stroke": "#e65100", "label": "DMZ / Semi-trusted"},
+    "library": {"fill": "#e3f2fd", "stroke": "#1565c0", "label": "Library / Package"},
 }
 
 EDGE_STYLES = {
@@ -32,9 +42,32 @@ EDGE_STYLES = {
     "write": {"strokeStyle": "solid", "strokeColor": "#495057", "label": "Write / command"},
     "conditional-yes": {"strokeStyle": "solid", "strokeColor": "#2b8a3e", "label": "Yes branch"},
     "conditional-no": {"strokeStyle": "solid", "strokeColor": "#c92a2a", "label": "No branch"},
+    "publish": {"strokeStyle": "dashed", "strokeColor": "#7b1fa2", "label": "Publish / emit"},
+    "subscribe": {"strokeStyle": "dashed", "strokeColor": "#1565c0", "label": "Subscribe / consume"},
+    "deploy": {"strokeStyle": "solid", "strokeColor": "#00897b", "label": "Deploys to"},
+    "data-flow": {"strokeStyle": "solid", "strokeColor": "#e65100", "label": "Data flow"},
+    "depends-on": {"strokeStyle": "solid", "strokeColor": "#1565c0", "label": "Depends on"},
+    "imports": {"strokeStyle": "dotted", "strokeColor": "#1565c0", "label": "Imports / uses"},
+    "trust-boundary": {"strokeStyle": "dashed", "strokeColor": "#c62828", "label": "Trust boundary"},
 }
 
-ROLE_ORDER = ["client", "api", "service", "database", "external", "infrastructure", "decision"]
+EVIDENCE_STYLES = {
+    "code": {"marker": "\u25cf", "color": "#2b8a3e", "label": "Code-derived"},
+    "inferred": {"marker": "\u25cb", "color": "#e67700", "label": "Inferred"},
+    "user-specified": {"marker": "\u25a0", "color": "#1971c2", "label": "User-specified"},
+}
+
+CONFIDENCE_STYLES = {
+    "high": {"label": "High confidence"},
+    "medium": {"label": "Medium confidence"},
+    "low": {"label": "Low confidence"},
+}
+
+ROLE_ORDER = [
+    "client", "api", "service", "database", "external", "infrastructure", "decision",
+    "host", "container-runtime", "network", "queue", "topic",
+    "trust-zone", "untrusted-zone", "dmz", "library",
+]
 DEFAULT_GROUP_STROKE = "#adb5bd"
 
 TITLE_FONT_SIZE = 28
@@ -111,6 +144,31 @@ def normalize_role(value: str | None) -> str:
         "infra": "infrastructure",
         "decision / branch": "decision",
         "branch": "decision",
+        "host/vm": "host",
+        "vm": "host",
+        "node": "host",
+        "server": "host",
+        "container": "container-runtime",
+        "docker": "container-runtime",
+        "k8s": "container-runtime",
+        "kubernetes": "container-runtime",
+        "zone": "network",
+        "subnet": "network",
+        "vpc": "network",
+        "message queue": "queue",
+        "stream": "queue",
+        "event bus": "queue",
+        "channel": "topic",
+        "event topic": "topic",
+        "trusted": "trust-zone",
+        "trusted zone": "trust-zone",
+        "internal zone": "trust-zone",
+        "untrusted": "untrusted-zone",
+        "external zone": "untrusted-zone",
+        "semi-trusted": "dmz",
+        "package": "library",
+        "module": "library",
+        "dependency": "library",
     }
     return aliases.get(role, role)
 
@@ -359,6 +417,10 @@ def diagram_kind_label(value: str | None) -> str:
         "component": "Component diagram",
         "context": "System context diagram",
         "architecture": "Architecture overview",
+        "deployment": "Deployment diagram",
+        "data-flow": "Data / event flow",
+        "trust-boundary": "Trust boundary diagram",
+        "dependency-map": "Dependency map",
     }
     return labels.get(kind, kind.title())
 
@@ -483,6 +545,7 @@ class SceneBuilder:
         container_id: str | None = None,
         group_ids: list[str] | None = None,
         align: str = "left",
+        color: str = "#1e1e1e",
         background_color: str = "transparent",
         reserve_for_floating_labels: bool = False,
     ) -> dict[str, Any]:
@@ -490,7 +553,7 @@ class SceneBuilder:
         item = self.base_element(element_id, "text", x, y, width or text_width, height or text_height)
         item.update(
             {
-                "strokeColor": "#1e1e1e",
+                "strokeColor": color,
                 "backgroundColor": background_color,
                 "groupIds": group_ids or [],
                 "roundness": None,
@@ -1241,6 +1304,26 @@ def add_title_block(builder: SceneBuilder, spec: dict[str, Any]) -> int:
     return CANVAS_MARGIN + title_height + 8 + subtitle_height + TOP_SECTION_GAP
 
 
+def _collect_evidence_sources(spec: dict[str, Any]) -> list[str]:
+    """Return the distinct evidence_source values used in nodes and edges, preserving order."""
+    seen: set[str] = set()
+    sources: list[str] = []
+    for item in list(spec.get("nodes", [])) + list(spec.get("edges", [])):
+        src = item.get("evidence_source")
+        if src and src not in seen:
+            sources.append(src)
+            seen.add(src)
+    return [s for s in EVIDENCE_STYLES if s in seen]
+
+
+def _has_evidence_metadata(spec: dict[str, Any]) -> bool:
+    """Return True if any node or edge carries evidence_source."""
+    for item in list(spec.get("nodes", [])) + list(spec.get("edges", [])):
+        if item.get("evidence_source"):
+            return True
+    return False
+
+
 def add_legend(
     builder: SceneBuilder,
     spec: dict[str, Any],
@@ -1252,10 +1335,15 @@ def add_legend(
 
     used_roles = [role for role in ROLE_ORDER if any(normalize_role(node.get("role")) == role for node in spec["nodes"])]
     used_edge_styles = [kind for kind in EDGE_STYLES if any(edge.get("kind", "sync") == kind for edge in spec["edges"])]
-    if not used_roles and not used_edge_styles:
+
+    show_evidence = spec.get("show_evidence", True) is not False and _has_evidence_metadata(spec)
+    used_evidence = _collect_evidence_sources(spec) if show_evidence else []
+
+    if not used_roles and not used_edge_styles and not used_evidence:
         return
 
-    legend_height = 60 + (len(used_roles) * LEGEND_ITEM_HEIGHT) + (len(used_edge_styles) * LEGEND_ITEM_HEIGHT)
+    evidence_section_height = (len(used_evidence) * LEGEND_ITEM_HEIGHT + 28) if used_evidence else 0
+    legend_height = 60 + (len(used_roles) * LEGEND_ITEM_HEIGHT) + (len(used_edge_styles) * LEGEND_ITEM_HEIGHT) + evidence_section_height
     legend_x = content_width + 120
     legend_y = CANVAS_MARGIN
     builder.add_group(GroupPlacement("legend", "Legend", legend_x, legend_y, LEGEND_WIDTH, legend_height, DEFAULT_GROUP_STROKE))
@@ -1307,6 +1395,33 @@ def add_legend(
         )
         current_y += LEGEND_ITEM_HEIGHT
 
+    # Evidence source legend section
+    if used_evidence:
+        current_y += 10
+        builder.add_text(
+            "legend-evidence-header",
+            "Evidence",
+            legend_x + 18,
+            current_y,
+            LEGEND_FONT_SIZE,
+            width=210,
+            height=20,
+        )
+        current_y += 18
+        for ev_source in used_evidence:
+            ev_style = EVIDENCE_STYLES[ev_source]
+            builder.add_text(
+                f"legend-ev-{ev_source}",
+                f"{ev_style['marker']}  {ev_style['label']}",
+                legend_x + 18,
+                current_y,
+                LEGEND_FONT_SIZE,
+                width=210,
+                height=20,
+                color=ev_style["color"],
+            )
+            current_y += LEGEND_ITEM_HEIGHT
+
     note = wrap_text("Relationship labels should describe intent.", 32)
     _, note_height = estimate_text_size(note, LEGEND_FONT_SIZE)
     builder.add_text("legend-note", note, legend_x, legend_y + legend_height + 12, LEGEND_FONT_SIZE, width=LEGEND_WIDTH, height=note_height)
@@ -1330,6 +1445,50 @@ def add_notes(builder: SceneBuilder, spec: dict[str, Any], placements: dict[str,
             width=720,
             height=note_height,
         )
+
+
+def add_evidence_notes(builder: SceneBuilder, spec: dict[str, Any], placements: dict[str, NodePlacement]) -> None:
+    """Append an evidence summary note below the diagram when evidence metadata is present."""
+    if spec.get("show_evidence", True) is False or not _has_evidence_metadata(spec):
+        return
+
+    # Build a compact summary: count items by evidence_source and confidence
+    source_counts: dict[str, int] = defaultdict(int)
+    confidence_counts: dict[str, int] = defaultdict(int)
+    for item in list(spec.get("nodes", [])) + list(spec.get("edges", [])):
+        src = item.get("evidence_source")
+        conf = item.get("confidence")
+        if src:
+            source_counts[src] += 1
+        if conf:
+            confidence_counts[conf] += 1
+
+    lines = ["Evidence Summary:"]
+    for src in EVIDENCE_STYLES:
+        if src in source_counts:
+            lines.append(f"  {EVIDENCE_STYLES[src]['marker']} {EVIDENCE_STYLES[src]['label']}: {source_counts[src]}")
+    for conf in ("high", "medium", "low"):
+        if conf in confidence_counts:
+            lines.append(f"  {conf.title()} confidence: {confidence_counts[conf]}")
+
+    text = "\n".join(lines)
+    base_y = max((p.y + p.height) for p in placements.values()) + 56
+    # Offset below any existing notes
+    existing_notes = spec.get("notes") or []
+    if existing_notes:
+        base_y += len(existing_notes) * 40
+
+    _, text_height = estimate_text_size(text, LABEL_FONT_SIZE)
+    builder.add_text(
+        "evidence-summary",
+        text,
+        CANVAS_MARGIN,
+        base_y,
+        LABEL_FONT_SIZE,
+        width=720,
+        height=text_height,
+        color="#495057",
+    )
 
 
 def build_scene(spec: dict[str, Any]) -> dict[str, Any]:
@@ -1359,6 +1518,7 @@ def build_scene(spec: dict[str, Any]) -> dict[str, Any]:
 
     add_legend(builder, spec, placements, content_width)
     add_notes(builder, spec, placements)
+    add_evidence_notes(builder, spec, placements)
 
     return {
         "type": "excalidraw",
@@ -1374,10 +1534,242 @@ def build_scene(spec: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def is_multi_view_spec(spec: dict[str, Any]) -> bool:
+    """Return True if the spec uses the multi-view model format."""
+    return isinstance(spec.get("model"), dict) and isinstance(spec.get("views"), list)
+
+
+def compile_view(model: dict[str, Any], view: dict[str, Any], model_title: str) -> dict[str, Any]:
+    """Compile a single view definition against the shared model into a builder-ready spec.
+
+    Selects the subset of entities and relationships requested by the view,
+    then emits a flat single-view spec that ``build_scene`` can render directly.
+    """
+    entities = model.get("entities", [])
+    relationships = model.get("relationships", [])
+
+    # Filter entities by view's entity_ids if specified
+    entity_ids = view.get("entity_ids")
+    if entity_ids is not None:
+        entity_set = set(entity_ids)
+        selected_entities = [e for e in entities if e["id"] in entity_set]
+    else:
+        selected_entities = list(entities)
+
+    selected_ids = {e["id"] for e in selected_entities}
+
+    # Filter relationships to those whose endpoints are both selected
+    selected_relationships = [
+        r for r in relationships
+        if r["from"] in selected_ids and r["to"] in selected_ids
+    ]
+
+    # Build the flat single-view spec
+    nodes = []
+    for entity in selected_entities:
+        node: dict[str, Any] = {}
+        for key in ("id", "label", "role", "group", "node_type", "technology",
+                     "description", "order", "shape",
+                     "evidence_source", "confidence", "owner", "boundary", "runtime"):
+            if key in entity:
+                node[key] = entity[key]
+        nodes.append(node)
+
+    edges = []
+    for rel in selected_relationships:
+        edge: dict[str, Any] = {}
+        for key in ("from", "to", "label", "kind", "sequence", "id",
+                     "evidence_source", "confidence"):
+            if key in rel:
+                edge[key] = rel[key]
+        edges.append(edge)
+
+    compiled: dict[str, Any] = {
+        "title": view.get("title") or model_title,
+        "nodes": nodes,
+        "edges": edges,
+    }
+
+    # Copy through view-level rendering options
+    for key in ("subtitle", "diagram_kind", "layout", "direction", "scope",
+                "show_legend", "show_evidence", "groups", "notes"):
+        if key in view:
+            compiled[key] = view[key]
+
+    return compiled
+
+
+DEFAULT_MAX_NODES = 15
+DEFAULT_UNIQUE_SUFFIX_LENGTH = 6
+
+
+def short_unique_id(length: int = DEFAULT_UNIQUE_SUFFIX_LENGTH) -> str:
+    return uuid.uuid4().hex[:length]
+
+
+def append_suffix_to_path(path: Path, suffix: str) -> Path:
+    return path.with_name(f"{path.stem}-{suffix}{path.suffix}")
+
+
+def resolve_output_base(
+    compiled_views: list[tuple[str, dict[str, Any]]],
+    base_output: Path,
+    *,
+    unique_output: bool = False,
+) -> Path:
+    """Return an output base path that will not overwrite existing artifacts.
+
+    When *unique_output* is true, a short unique suffix is always appended to the
+    requested base filename. Otherwise, a suffix is only appended when the
+    requested output path (or any derived multi-view artifact path) already
+    exists on disk.
+    """
+    if unique_output:
+        return append_suffix_to_path(base_output, short_unique_id())
+
+    if len(compiled_views) == 1:
+        return append_suffix_to_path(base_output, short_unique_id()) if base_output.exists() else base_output
+
+    extension = base_output.suffix
+    for view_id, _view_spec in compiled_views:
+        candidate = base_output.parent / f"{base_output.stem}-{view_id}{extension}"
+        if candidate.exists():
+            return append_suffix_to_path(base_output, short_unique_id())
+    return base_output
+
+
+def auto_split_view(
+    view_id: str,
+    view_spec: dict[str, Any],
+    max_nodes: int,
+) -> list[tuple[str, dict[str, Any]]]:
+    """Split a compiled view into overview + detail views when it exceeds *max_nodes*.
+
+    If the view is within budget, returns it unchanged as a single-element list.
+    Otherwise, returns an overview containing all nodes plus one detail view per
+    group that has two or more nodes.
+    """
+    nodes = view_spec.get("nodes", [])
+    if len(nodes) <= max_nodes:
+        return [(view_id, view_spec)]
+
+    # --- Build overview (keep all nodes, no split) ---
+    overview_spec = dict(view_spec)
+    overview_spec["title"] = view_spec.get("title", "Overview") + " — Overview"
+    result: list[tuple[str, dict[str, Any]]] = [(f"{view_id}-overview", overview_spec)]
+
+    # --- Build one detail view per group with 2+ nodes ---
+    groups_by_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for node in nodes:
+        groups_by_id[node.get("group", "default")].append(node)
+
+    for group_id, group_nodes in groups_by_id.items():
+        if len(group_nodes) < 2:
+            continue
+
+        group_node_ids = {n["id"] for n in group_nodes}
+        detail_edges = [
+            e for e in view_spec.get("edges", [])
+            if e["from"] in group_node_ids or e["to"] in group_node_ids
+        ]
+
+        # Include nodes referenced by edges but outside this group
+        referenced_ids = set()
+        for e in detail_edges:
+            referenced_ids.add(e["from"])
+            referenced_ids.add(e["to"])
+        extra_nodes = [
+            n for n in nodes
+            if n["id"] in referenced_ids and n["id"] not in group_node_ids
+        ]
+
+        group_label = group_id.replace("-", " ").title()
+        detail_spec: dict[str, Any] = {
+            "title": f"{view_spec.get('title', 'Detail')} — {group_label}",
+            "nodes": list(group_nodes) + extra_nodes,
+            "edges": detail_edges,
+        }
+        # Carry through rendering options
+        for key in ("subtitle", "diagram_kind", "layout", "direction", "scope",
+                     "show_legend", "show_evidence", "groups", "notes"):
+            if key in view_spec:
+                detail_spec[key] = view_spec[key]
+
+        result.append((f"{view_id}-{slugify(group_id)}", detail_spec))
+
+    return result
+
+
+def compile_spec(spec: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Compile a spec into a list of (view_id, builder_ready_spec) pairs.
+
+    For legacy single-view specs, returns one pair with view_id ``"default"``.
+    For multi-view specs, returns one pair per view definition.
+    Views that exceed ``max_nodes`` are automatically split into overview + detail
+    artifacts.
+    """
+    if not is_multi_view_spec(spec):
+        return [("default", spec)]
+
+    model = spec["model"]
+    views = spec["views"]
+    model_title = spec.get("title", "Diagram")
+    max_nodes = model.get("max_nodes") or DEFAULT_MAX_NODES
+
+    if not views:
+        raise ValueError("Multi-view spec must include at least one view in 'views'.")
+
+    compiled_views: list[tuple[str, dict[str, Any]]] = []
+    for view in views:
+        view_id = view.get("view_id")
+        if not view_id:
+            raise ValueError("Each view must include a 'view_id'.")
+        compiled = compile_view(model, view, model_title)
+        compiled_views.extend(auto_split_view(view_id, compiled, max_nodes))
+
+    return compiled_views
+
+
+def build_artifacts(
+    compiled_views: list[tuple[str, dict[str, Any]]],
+    base_output: Path,
+) -> list[Path]:
+    """Build .excalidraw artifacts from compiled views and write them to disk.
+
+    For a single compiled view, writes directly to *base_output*.
+    For multiple compiled views, writes one artifact per view using the requested
+    base filename: ``{base_output.stem}-{view_id}{base_output.suffix}``.
+
+    Returns the list of artifact paths that were written.
+    """
+    base_output.parent.mkdir(parents=True, exist_ok=True)
+    artifacts: list[Path] = []
+
+    if len(compiled_views) == 1:
+        _view_id, view_spec = compiled_views[0]
+        scene = build_scene(view_spec)
+        base_output.write_text(json.dumps(scene, indent=2), encoding="utf-8")
+        artifacts.append(base_output)
+    else:
+        for view_id, view_spec in compiled_views:
+            scene = build_scene(view_spec)
+            artifact_name = f"{base_output.stem}-{view_id}{base_output.suffix}"
+            artifact_path = base_output.parent / artifact_name
+            artifact_path.write_text(json.dumps(scene, indent=2), encoding="utf-8")
+            artifacts.append(artifact_path)
+
+    return artifacts
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build a .excalidraw diagram from a structured JSON spec.")
     parser.add_argument("spec", help="Path to the diagram spec JSON file.")
     parser.add_argument("--output", help="Output .excalidraw path. Defaults to <spec>.excalidraw")
+    parser.add_argument(
+        "--unique-output",
+        action="store_true",
+        help="Append a short unique suffix to the output filename(s). Useful for keeping multiple runs of the same topic.",
+    )
     args = parser.parse_args()
 
     spec_path = Path(args.spec)
@@ -1387,15 +1779,22 @@ def main() -> int:
 
     try:
         spec = json.loads(spec_path.read_text(encoding="utf-8"))
-        scene = build_scene(spec)
+        compiled_views = compile_spec(spec)
     except Exception as exc:  # pragma: no cover - surfaced to user directly
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    output_path = Path(args.output) if args.output else spec_path.with_suffix(".excalidraw")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(scene, indent=2), encoding="utf-8")
-    print(output_path)
+    base_output = Path(args.output) if args.output else spec_path.with_suffix(".excalidraw")
+    base_output = resolve_output_base(compiled_views, base_output, unique_output=args.unique_output)
+
+    try:
+        artifacts = build_artifacts(compiled_views, base_output)
+        for artifact_path in artifacts:
+            print(artifact_path)
+    except Exception as exc:  # pragma: no cover - surfaced to user directly
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
     return 0
 
 

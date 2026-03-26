@@ -179,6 +179,112 @@ Failure smells:
 - Treats preview failure as total failure.
 - Omits artifact paths from the final report.
 
+### 9. Multi-View Scenario Pack
+
+Prompt:
+
+```text
+Document the payment system end to end. I want an overview of all services plus a focused flow for the checkout path.
+```
+
+Expected behavior:
+
+- Selects `scenario-pack` mode.
+- Builds one shared model with all entities.
+- Emits at least two artifacts: an overview and a checkout flow.
+- Uses deterministic artifact naming: `{slug}-{view_id}.excalidraw`.
+- Both artifacts share consistent entity IDs and labels.
+
+Failure smells:
+
+- Only one artifact produced.
+- Entities renamed or re-IDed between views.
+- Auto-split fires but produces unintelligible fragments.
+
+### 10. Evidence-Aware Codebase Discovery
+
+Prompt:
+
+```text
+Diagram the authentication flow in this repo. Show which parts are code-derived and which are inferred.
+```
+
+Expected behavior:
+
+- Triggers codebase discovery.
+- Tags entities and relationships with `evidence_source` (code/inferred/user-specified) and `confidence`.
+- Evidence legend or notes appear in the rendered output.
+- Report explicitly states how many entities are code-derived vs inferred.
+
+Failure smells:
+
+- All entities marked with the same evidence source.
+- Evidence metadata present in spec but invisible in output.
+- Report omits evidence summary.
+
+### 11. Mermaid Export
+
+Prompt:
+
+```text
+Generate a Mermaid version of the order checkout flow for our pull request description.
+```
+
+Expected behavior:
+
+- Produces Mermaid text output alongside or instead of `.excalidraw`.
+- Uses the same compiled view data as the Excalidraw builder.
+- Mermaid text is valid and renders in GitHub PR previews.
+- Edge styles map correctly (dashed for async, solid for sync).
+
+Failure smells:
+
+- Mermaid text generated from separate prompt output instead of compiled views.
+- Invalid Mermaid syntax that fails to render.
+- Node IDs or labels differ from the Excalidraw version.
+
+### 12. Deployment/Infrastructure View
+
+Prompt:
+
+```text
+Show a deployment diagram of our Kubernetes cluster with the API pods, worker pods, Redis, and PostgreSQL on their respective nodes.
+```
+
+Expected behavior:
+
+- Selects `deployment` diagram kind.
+- Uses host, container-runtime, network, and database roles.
+- Groups by infrastructure topology (nodes, namespaces).
+- Deploy edges show where services run.
+
+Failure smells:
+
+- Runtime/dynamic flow instead of deployment topology.
+- Missing infrastructure grouping.
+- Generic service roles instead of deployment-specific roles.
+
+### 13. Drill-Down Continuity
+
+Prompt:
+
+```text
+First show me the whole system overview, then drill into the auth service internals.
+```
+
+Expected behavior:
+
+- Produces an overview artifact and a drill-down artifact.
+- The auth service entity ID is consistent across both views.
+- The drill-down shows internal components not visible in the overview.
+- Report notes which overview entities have drill-down views.
+
+Failure smells:
+
+- Drill-down repeats the overview instead of showing internals.
+- Entity IDs change between views.
+- No cross-reference between overview and drill-down artifacts.
+
 ## Suggested Release Gate
 
 Before merging prompt changes:
@@ -187,3 +293,6 @@ Before merging prompt changes:
 - Run at least one codebase-backed prompt.
 - Run one oversized prompt to verify splitting behavior.
 - Run one case with preview rendering unavailable.
+- Run one multi-view scenario pack prompt (eval 9).
+- Run one evidence-aware discovery prompt (eval 10).
+- Run one Mermaid export prompt (eval 11).

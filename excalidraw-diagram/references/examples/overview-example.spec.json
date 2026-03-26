@@ -1,0 +1,190 @@
+{
+  "title": "E-Commerce Platform",
+  "model": {
+    "entities": [
+      {
+        "id": "web-app",
+        "label": "Web Application",
+        "role": "client",
+        "group": "frontend",
+        "node_type": "Client",
+        "technology": "React",
+        "description": "Customer-facing storefront",
+        "order": 1,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "frontend-team",
+        "boundary": "internal",
+        "runtime": "browser"
+      },
+      {
+        "id": "mobile-app",
+        "label": "Mobile App",
+        "role": "client",
+        "group": "frontend",
+        "node_type": "Client",
+        "technology": "React Native",
+        "description": "iOS and Android storefront",
+        "order": 2,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "mobile-team",
+        "boundary": "internal",
+        "runtime": "mobile"
+      },
+      {
+        "id": "api-gateway",
+        "label": "API Gateway",
+        "role": "api",
+        "group": "edge",
+        "node_type": "Gateway",
+        "technology": "Kong",
+        "description": "Routes and rate-limits public traffic",
+        "order": 3,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "platform-team",
+        "boundary": "internal",
+        "runtime": "kubernetes"
+      },
+      {
+        "id": "catalog-service",
+        "label": "Catalog Service",
+        "role": "service",
+        "group": "services",
+        "node_type": "Container",
+        "technology": "Node.js",
+        "description": "Manages product listings and search",
+        "order": 4,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "catalog-team",
+        "boundary": "internal",
+        "runtime": "kubernetes"
+      },
+      {
+        "id": "order-service",
+        "label": "Order Service",
+        "role": "service",
+        "group": "services",
+        "node_type": "Container",
+        "technology": "Java",
+        "description": "Handles order lifecycle",
+        "order": 5,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "orders-team",
+        "boundary": "internal",
+        "runtime": "kubernetes"
+      },
+      {
+        "id": "payment-service",
+        "label": "Payment Service",
+        "role": "service",
+        "group": "services",
+        "node_type": "Container",
+        "technology": "Go",
+        "description": "Processes payments and refunds",
+        "order": 6,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "payments-team",
+        "boundary": "internal",
+        "runtime": "kubernetes"
+      },
+      {
+        "id": "notification-service",
+        "label": "Notification Service",
+        "role": "service",
+        "group": "services",
+        "node_type": "Container",
+        "technology": "Python",
+        "description": "Sends emails and push notifications",
+        "order": 7,
+        "evidence_source": "code",
+        "confidence": "medium",
+        "owner": "platform-team",
+        "boundary": "internal",
+        "runtime": "kubernetes"
+      },
+      {
+        "id": "product-db",
+        "label": "Product DB",
+        "role": "database",
+        "group": "data",
+        "node_type": "Database",
+        "technology": "PostgreSQL",
+        "description": "Stores product catalog",
+        "order": 8,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "catalog-team",
+        "boundary": "internal",
+        "runtime": "rds"
+      },
+      {
+        "id": "order-db",
+        "label": "Order DB",
+        "role": "database",
+        "group": "data",
+        "node_type": "Database",
+        "technology": "PostgreSQL",
+        "description": "Stores orders and payment records",
+        "order": 9,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "orders-team",
+        "boundary": "internal",
+        "runtime": "rds"
+      },
+      {
+        "id": "stripe",
+        "label": "Stripe",
+        "role": "external",
+        "group": "external",
+        "node_type": "External",
+        "technology": "REST API",
+        "description": "Payment processing provider",
+        "order": 10,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "unknown",
+        "boundary": "external",
+        "runtime": "saas"
+      }
+    ],
+    "relationships": [
+      { "from": "web-app", "to": "api-gateway", "label": "HTTPS requests", "kind": "sync", "evidence_source": "code", "confidence": "high" },
+      { "from": "mobile-app", "to": "api-gateway", "label": "HTTPS requests", "kind": "sync", "evidence_source": "code", "confidence": "high" },
+      { "from": "api-gateway", "to": "catalog-service", "label": "Route /catalog", "kind": "sync", "evidence_source": "code", "confidence": "high" },
+      { "from": "api-gateway", "to": "order-service", "label": "Route /orders", "kind": "sync", "evidence_source": "code", "confidence": "high" },
+      { "from": "order-service", "to": "payment-service", "label": "Process payment", "kind": "sync", "evidence_source": "code", "confidence": "high" },
+      { "from": "payment-service", "to": "stripe", "label": "Charge card", "kind": "sync", "evidence_source": "code", "confidence": "high" },
+      { "from": "order-service", "to": "notification-service", "label": "Order confirmed", "kind": "async", "evidence_source": "inferred", "confidence": "medium" },
+      { "from": "catalog-service", "to": "product-db", "label": "Query products", "kind": "read", "evidence_source": "code", "confidence": "high" },
+      { "from": "order-service", "to": "order-db", "label": "Read/write orders", "kind": "write", "evidence_source": "code", "confidence": "high" }
+    ],
+    "detail_level": "standard",
+    "audience": "technical"
+  },
+  "views": [
+    {
+      "view_id": "platform-overview",
+      "view_mode": "overview",
+      "title": "E-Commerce Platform Overview",
+      "diagram_kind": "architecture",
+      "layout": "layers",
+      "show_legend": true,
+      "groups": [
+        { "id": "frontend", "label": "Frontend" },
+        { "id": "edge", "label": "Edge" },
+        { "id": "services", "label": "Services" },
+        { "id": "data", "label": "Data" },
+        { "id": "external", "label": "External" }
+      ],
+      "notes": [
+        { "text": "Overview of all major platform components. Use drill-down views for service internals." }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,133 @@
+{
+  "title": "Order Checkout System",
+  "model": {
+    "entities": [
+      {
+        "id": "browser",
+        "label": "Browser",
+        "role": "client",
+        "group": "client",
+        "node_type": "Client",
+        "technology": "React",
+        "description": "Customer clicks Place Order",
+        "order": 1,
+        "evidence_source": "code",
+        "confidence": "high"
+      },
+      {
+        "id": "api-gw",
+        "label": "API Gateway",
+        "role": "api",
+        "group": "edge",
+        "node_type": "Gateway",
+        "technology": "Kong",
+        "description": "Validates auth token and routes request",
+        "order": 2,
+        "evidence_source": "code",
+        "confidence": "high"
+      },
+      {
+        "id": "order-svc",
+        "label": "Order Service",
+        "role": "service",
+        "group": "services",
+        "node_type": "Container",
+        "technology": "Java / Spring Boot",
+        "description": "Orchestrates checkout: validates cart, reserves inventory, initiates payment",
+        "order": 3,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "orders-team",
+        "boundary": "internal",
+        "runtime": "kubernetes"
+      },
+      {
+        "id": "inventory-svc",
+        "label": "Inventory Service",
+        "role": "service",
+        "group": "services",
+        "node_type": "Container",
+        "technology": "Go",
+        "description": "Checks and reserves stock",
+        "order": 4,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "warehouse-team",
+        "boundary": "internal",
+        "runtime": "kubernetes"
+      },
+      {
+        "id": "payment-svc",
+        "label": "Payment Service",
+        "role": "service",
+        "group": "services",
+        "node_type": "Container",
+        "technology": "Go",
+        "description": "Charges the customer",
+        "order": 5,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "payments-team",
+        "boundary": "internal",
+        "runtime": "kubernetes"
+      },
+      {
+        "id": "order-db",
+        "label": "Order DB",
+        "role": "database",
+        "group": "data",
+        "node_type": "Database",
+        "technology": "PostgreSQL",
+        "description": "Persists order records",
+        "order": 6,
+        "evidence_source": "code",
+        "confidence": "high"
+      },
+      {
+        "id": "stripe",
+        "label": "Stripe API",
+        "role": "external",
+        "group": "external",
+        "node_type": "External",
+        "technology": "REST",
+        "description": "Payment processor",
+        "order": 7,
+        "evidence_source": "user-specified",
+        "confidence": "high",
+        "boundary": "external"
+      }
+    ],
+    "relationships": [
+      { "from": "browser", "to": "api-gw", "label": "POST /checkout", "kind": "sync", "sequence": 1, "evidence_source": "code", "confidence": "high" },
+      { "from": "api-gw", "to": "order-svc", "label": "Forward request", "kind": "sync", "sequence": 2, "evidence_source": "code", "confidence": "high" },
+      { "from": "order-svc", "to": "inventory-svc", "label": "Reserve stock", "kind": "sync", "sequence": 3, "evidence_source": "code", "confidence": "high" },
+      { "from": "order-svc", "to": "payment-svc", "label": "Charge customer", "kind": "sync", "sequence": 4, "evidence_source": "code", "confidence": "high" },
+      { "from": "payment-svc", "to": "stripe", "label": "Create charge", "kind": "sync", "sequence": 5, "evidence_source": "code", "confidence": "high" },
+      { "from": "order-svc", "to": "order-db", "label": "Write order", "kind": "write", "sequence": 6, "evidence_source": "code", "confidence": "high" }
+    ],
+    "detail_level": "standard",
+    "audience": "technical"
+  },
+  "views": [
+    {
+      "view_id": "checkout-flow",
+      "view_mode": "focused-flow",
+      "title": "Checkout Flow",
+      "subtitle": "Dynamic diagram | Browser checkout to payment completion",
+      "diagram_kind": "dynamic",
+      "layout": "flow",
+      "direction": "vertical",
+      "show_legend": true,
+      "groups": [
+        { "id": "client", "label": "Client" },
+        { "id": "edge", "label": "Edge" },
+        { "id": "services", "label": "Application" },
+        { "id": "data", "label": "Data" },
+        { "id": "external", "label": "External" }
+      ],
+      "notes": [
+        { "text": "Focused flow showing the happy path from checkout click to order persistence." }
+      ]
+    }
+  ]
+}

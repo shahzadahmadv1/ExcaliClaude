@@ -1,0 +1,138 @@
+{
+  "title": "Payment Service Internals",
+  "model": {
+    "entities": [
+      {
+        "id": "payment-controller",
+        "label": "PaymentController",
+        "role": "api",
+        "group": "api",
+        "node_type": "Controller",
+        "technology": "Go / net/http",
+        "description": "HTTP handler for /payments endpoints",
+        "order": 1,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "payments-team",
+        "boundary": "internal",
+        "runtime": "kubernetes"
+      },
+      {
+        "id": "payment-orchestrator",
+        "label": "PaymentOrchestrator",
+        "role": "service",
+        "group": "core",
+        "node_type": "Service",
+        "technology": "Go",
+        "description": "Coordinates validation, fraud check, and charge execution",
+        "order": 2,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "payments-team",
+        "boundary": "internal"
+      },
+      {
+        "id": "fraud-evaluator",
+        "label": "FraudEvaluator",
+        "role": "service",
+        "group": "core",
+        "node_type": "Evaluator",
+        "technology": "Go",
+        "description": "Scores transaction risk using rules and ML model",
+        "order": 3,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "risk-team",
+        "boundary": "internal"
+      },
+      {
+        "id": "card-validator",
+        "label": "CardValidator",
+        "role": "service",
+        "group": "core",
+        "node_type": "Validator",
+        "technology": "Go",
+        "description": "Validates card details and checks Luhn algorithm",
+        "order": 4,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "payments-team",
+        "boundary": "internal"
+      },
+      {
+        "id": "stripe-client",
+        "label": "StripeClient",
+        "role": "external",
+        "group": "external",
+        "node_type": "Client",
+        "technology": "Go / HTTP",
+        "description": "Wraps Stripe API calls",
+        "order": 5,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "payments-team",
+        "boundary": "external"
+      },
+      {
+        "id": "payment-repo",
+        "label": "PaymentRepository",
+        "role": "database",
+        "group": "data",
+        "node_type": "Repository",
+        "technology": "Go / pgx",
+        "description": "Reads and writes payment records",
+        "order": 6,
+        "evidence_source": "code",
+        "confidence": "high",
+        "owner": "payments-team",
+        "boundary": "internal"
+      },
+      {
+        "id": "risk-model",
+        "label": "Risk ML Model",
+        "role": "external",
+        "group": "external",
+        "node_type": "External",
+        "technology": "SageMaker endpoint",
+        "description": "Returns fraud probability score",
+        "order": 7,
+        "evidence_source": "inferred",
+        "confidence": "medium",
+        "owner": "risk-team",
+        "boundary": "external",
+        "runtime": "aws"
+      }
+    ],
+    "relationships": [
+      { "from": "payment-controller", "to": "payment-orchestrator", "label": "Handle charge request", "kind": "sync", "sequence": 1, "evidence_source": "code", "confidence": "high" },
+      { "from": "payment-orchestrator", "to": "card-validator", "label": "Validate card", "kind": "sync", "sequence": 2, "evidence_source": "code", "confidence": "high" },
+      { "from": "payment-orchestrator", "to": "fraud-evaluator", "label": "Score risk", "kind": "sync", "sequence": 3, "evidence_source": "code", "confidence": "high" },
+      { "from": "fraud-evaluator", "to": "risk-model", "label": "Get fraud score", "kind": "sync", "sequence": 4, "evidence_source": "inferred", "confidence": "medium" },
+      { "from": "payment-orchestrator", "to": "stripe-client", "label": "Execute charge", "kind": "sync", "sequence": 5, "evidence_source": "code", "confidence": "high" },
+      { "from": "payment-orchestrator", "to": "payment-repo", "label": "Persist payment", "kind": "write", "sequence": 6, "evidence_source": "code", "confidence": "high" }
+    ],
+    "detail_level": "detailed",
+    "audience": "technical"
+  },
+  "views": [
+    {
+      "view_id": "payment-internals",
+      "view_mode": "drill-down",
+      "title": "Payment Service Internals",
+      "subtitle": "Component diagram | Internal payment processing pipeline",
+      "diagram_kind": "component",
+      "layout": "flow",
+      "direction": "vertical",
+      "show_legend": true,
+      "groups": [
+        { "id": "api", "label": "API Layer" },
+        { "id": "core", "label": "Core Logic" },
+        { "id": "data", "label": "Data" },
+        { "id": "external", "label": "External" }
+      ],
+      "notes": [
+        { "text": "Drill-down into the Payment Service showing internal components, validation pipeline, and fraud scoring." }
+      ]
+    }
+  ]
+}

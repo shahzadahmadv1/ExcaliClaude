@@ -37,13 +37,29 @@ When you change the prompt logic, also run through the manual evaluation matrix 
 
 The deterministic layout engine. When making changes:
 
-- Run it against the example spec to verify output:
+- Run it against both single-view and multi-view examples:
 
   ```bash
+  # Single-view (legacy)
   python excalidraw-diagram/references/build_excalidraw_diagram.py \
     excalidraw-diagram/references/examples/enhanced-auth-flow.spec.json \
-    --output test-output.excalidraw
+    --output test-output.excalidraw \
+    --unique-output
+
+  # Multi-view
+  python excalidraw-diagram/references/build_excalidraw_diagram.py \
+    excalidraw-diagram/references/examples/multi-view-auth.spec.json \
+    --output test-multi.excalidraw \
+    --unique-output
+
+  # Scenario pack (multi-artifact)
+  python excalidraw-diagram/references/build_excalidraw_diagram.py \
+    excalidraw-diagram/references/examples/scenario-pack-example.spec.json \
+    --output test-scenario.excalidraw \
+    --unique-output
   ```
+
+- Use `--unique-output` when you want a short run suffix appended automatically so repeated diagram runs do not overwrite each other.
 
 - Validate the output:
 
@@ -51,7 +67,18 @@ The deterministic layout engine. When making changes:
   python excalidraw-diagram/references/validate_excalidraw.py test-output.excalidraw
   ```
 
+- Test Mermaid export:
+
+  ```bash
+  python excalidraw-diagram/references/export_mermaid.py \
+    excalidraw-diagram/references/examples/focused-flow-example.spec.json
+  ```
+
 - Open the `.excalidraw` file in VS Code or excalidraw.com to visually verify.
+
+### Mermaid exporter (`export_mermaid.py`)
+
+The secondary text export. It imports `compile_spec` from the builder, so changes to the compilation pipeline automatically apply to Mermaid output. Test with at least one multi-view spec to verify multi-graph output.
 
 ### Color palette and spec format
 
@@ -88,6 +115,17 @@ Open an issue with:
 - What went wrong (screenshot or description)
 - Your environment (OS, Python version, Playwright installed?)
 
+## Smoke Test Checklist
+
+Before submitting a PR, verify:
+
+- [ ] Build passes on `enhanced-auth-flow.spec.json` (single-view legacy)
+- [ ] Build passes on `multi-view-auth.spec.json` (multi-view)
+- [ ] Build passes on `scenario-pack-example.spec.json` (multi-artifact)
+- [ ] Validation passes on all generated `.excalidraw` files
+- [ ] Mermaid export runs without errors on at least one example
+- [ ] If changing the skill prompt, run the evaluation matrix in `docs/evals/skill-evaluation-matrix.md`
+
 ## Feature Ideas
 
 Open an issue or start a Discussion. Good contributions include:
@@ -95,8 +133,9 @@ Open an issue or start a Discussion. Good contributions include:
 - New diagram types or layout modes
 - Better color/styling defaults
 - Improved label placement or arrow routing
-- Support for additional output formats
+- Additional output formats (Mermaid is already supported)
 - Example specs and diagrams
+- View mode enhancements (overview, focused-flow, drill-down, scenario-pack)
 
 ## Code Style
 
