@@ -8,6 +8,12 @@ from pathlib import Path
 ORDER_KEY_DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 MAX_NODE_WARNING_THRESHOLD = 15
+EDGE_WARNING_DENSITY = 1.35
+MAX_READABLE_EDGE_DEGREE = 5
+MAX_READABLE_OVERLOADED_NODES = 3
+VALID_OVERVIEW_STYLES = {"auto", "pure-layers", "core-with-sides"}
+VALID_GROUP_PLACEMENTS = {"layer", "side-left", "side-right"}
+HYBRID_OVERVIEW_KINDS = {"architecture", "container", "context"}
 
 VALID_VIEW_MODES = {"overview", "focused-flow", "drill-down", "scenario-pack"}
 VALID_EVIDENCE_SOURCES = {"code", "inferred", "user-specified"}
@@ -39,6 +45,118 @@ def validate_order_key(key: str, digits: str = ORDER_KEY_DIGITS) -> None:
     fractional_part = key[len(integer_part):]
     if fractional_part.endswith(digits[0]):
         raise ValueError(f"invalid order key: {key}")
+
+
+def readability_metrics(node_ids: set[str], edges: list[dict]) -> dict[str, float]:
+    degree: dict[str, int] = {}
+    for edge in edges:
+        source_id = edge.get("from")
+        target_id = edge.get("to")
+        if source_id in node_ids:
+            degree[source_id] = degree.get(source_id, 0) + 1
+        if target_id in node_ids and target_id != source_id:
+            degree[target_id] = degree.get(target_id, 0) + 1
+
+    node_count = len(node_ids)
+    edge_count = len(edges)
+    max_degree = max(degree.values(), default=0)
+    overloaded_nodes = sum(1 for value in degree.values() if value >= MAX_READABLE_EDGE_DEGREE)
+    edge_density = edge_count / max(node_count, 1)
+    edge_limit = max(int(node_count * 1.5), node_count + 4, MAX_NODE_WARNING_THRESHOLD + 4)
+    return {
+        "node_count": node_count,
+        "edge_count": edge_count,
+        "edge_density": edge_density,
+        "max_degree": max_degree,
+        "overloaded_nodes": overloaded_nodes,
+        "edge_limit": edge_limit,
+    }
+
+
+def readability_warnings(scope_label: str, node_ids: set[str], edges: list[dict]) -> list[str]:
+    metrics = readability_metrics(node_ids, edges)
+    warnings: list[str] = []
+
+    if metrics["edge_count"] > metrics["edge_limit"]:
+        warnings.append(
+            f"{scope_label}: relationship count ({metrics['edge_count']}) is high for "
+            f"{metrics['node_count']} nodes; consider splitting or simplifying the view"
+        )
+    if metrics["edge_density"] >= EDGE_WARNING_DENSITY:
+        warnings.append(
+            f"{scope_label}: connector density ({metrics['edge_density']:.2f} edges/node) "
+            "may cause overlapping routes"
+        )
+    if metrics["max_degree"] > MAX_READABLE_EDGE_DEGREE:
+        warnings.append(
+            f"{scope_label}: max node degree ({metrics['max_degree']}) is high; "
+            "consider a drill-down or scenario-pack view"
+        )
+    if metrics["overloaded_nodes"] > MAX_READABLE_OVERLOADED_NODES:
+        warnings.append(
+            f"{scope_label}: {metrics['overloaded_nodes']} nodes have degree >= "
+            f"{MAX_READABLE_EDGE_DEGREE}; connectors may become unreadable"
+        )
+    return warnings
+
+
+def normalize_overview_style(value: str | None) -> str:
+    if value is None:
+        return "auto"
+    return value if value in VALID_OVERVIEW_STYLES else "<invalid>"
+
+
+def normalize_group_placement(value: str | None) -> str:
+    if value is None:
+        return "layer"
+    return value if value in VALID_GROUP_PLACEMENTS else "<invalid>"
+
+
+def overview_layout_warning(
+    scope_label: str,
+    view: dict,
+    selected_entities: list[dict],
+) -> list[str]:
+    warnings: list[str] = []
+    if view.get("layout") != "layers":
+        return warnings
+    if view.get("view_mode") != "overview":
+        return warnings
+    if view.get("diagram_kind") not in HYBRID_OVERVIEW_KINDS:
+        return warnings
+
+    overview_style = normalize_overview_style(view.get("overview_style"))
+    if overview_style == "<invalid>":
+        warnings.append(
+            f"{scope_label}: overview_style '{view.get('overview_style')}' is invalid; "
+            f"use one of {VALID_OVERVIEW_STYLES}"
+        )
+        return warnings
+
+    explicit_side_groups = sum(
+        1 for group in view.get("groups", [])
+        if isinstance(group, dict) and normalize_group_placement(group.get("placement")) in {"side-left", "side-right"}
+    )
+    external_count = sum(
+        1 for entity in selected_entities
+        if entity.get("boundary") == "external" or entity.get("role") == "external"
+    )
+    messaging_count = sum(
+        1 for entity in selected_entities
+        if entity.get("role") in {"queue", "topic"}
+    )
+
+    if overview_style == "pure-layers" and explicit_side_groups:
+        warnings.append(
+            f"{scope_label}: pure-layers conflicts with side-placed groups; the builder will favor side placement"
+        )
+
+    if overview_style in {"auto", "pure-layers"} and (external_count >= 2 or messaging_count >= 1) and explicit_side_groups == 0:
+        warnings.append(
+            f"{scope_label}: consider overview_style 'core-with-sides' so external systems and messaging do not consume full-width layers"
+        )
+
+    return warnings
 
 
 def validate(filepath: str) -> list[str]:
@@ -158,6 +276,19 @@ def validate_spec(filepath: str) -> tuple[list[str], list[str]]:
 
     # Legacy single-view spec — skip multi-view checks
     if model is None and views is None:
+        overview_style = data.get("overview_style")
+        if overview_style is not None and normalize_overview_style(overview_style) == "<invalid>":
+            warnings.append(
+                f"Legacy view: overview_style '{overview_style}' not in {VALID_OVERVIEW_STYLES}"
+            )
+        for group in data.get("groups", []):
+            if not isinstance(group, dict):
+                continue
+            placement = group.get("placement")
+            if placement is not None and normalize_group_placement(placement) == "<invalid>":
+                warnings.append(
+                    f"Legacy view: group '{group.get('id', '<unknown>')}' uses unsupported placement '{placement}'"
+                )
         # Check node count warning for legacy specs
         nodes = data.get("nodes", [])
         if len(nodes) > MAX_NODE_WARNING_THRESHOLD:
@@ -166,9 +297,21 @@ def validate_spec(filepath: str) -> tuple[list[str], list[str]]:
                 "consider splitting into overview + detail views"
             )
         # Check for unlabeled edges
-        for i, edge in enumerate(data.get("edges", [])):
+        edges = [edge for edge in data.get("edges", []) if isinstance(edge, dict)]
+        for i, edge in enumerate(edges):
             if isinstance(edge, dict) and not edge.get("label"):
                 warnings.append(f"Edge at index {i} ({edge.get('from')}->{edge.get('to')}) has no label")
+        node_ids = {node.get("id") for node in nodes if isinstance(node, dict) and node.get("id")}
+        warnings.extend(readability_warnings("Legacy view", node_ids, edges))
+        selected_entities = [node for node in nodes if isinstance(node, dict)]
+        legacy_view = {
+            "layout": data.get("layout"),
+            "view_mode": data.get("view_mode", "overview"),
+            "diagram_kind": data.get("diagram_kind"),
+            "overview_style": data.get("overview_style"),
+            "groups": data.get("groups", []),
+        }
+        warnings.extend(overview_layout_warning("Legacy view", legacy_view, selected_entities))
         return errors, warnings
 
     # Multi-view spec validation
@@ -274,6 +417,21 @@ def validate_spec(filepath: str) -> tuple[list[str], list[str]]:
                 f"View '{vid or i}': view_mode '{vm}' not in {VALID_VIEW_MODES}"
             )
 
+        overview_style = view.get("overview_style")
+        if overview_style is not None and normalize_overview_style(overview_style) == "<invalid>":
+            warnings.append(
+                f"View '{vid or i}': overview_style '{overview_style}' not in {VALID_OVERVIEW_STYLES}"
+            )
+
+        for group in view.get("groups", []):
+            if not isinstance(group, dict):
+                continue
+            placement = group.get("placement")
+            if placement is not None and normalize_group_placement(placement) == "<invalid>":
+                warnings.append(
+                    f"View '{vid or i}': group '{group.get('id', '<unknown>')}' uses unsupported placement '{placement}'"
+                )
+
         # Check entity_ids reference valid entities
         entity_refs = view.get("entity_ids")
         if entity_refs is not None and isinstance(entities, list):
@@ -296,6 +454,23 @@ def validate_spec(filepath: str) -> tuple[list[str], list[str]]:
                 f"View '{vid or i}': all {len(entities)} entities selected, exceeds "
                 f"{MAX_NODE_WARNING_THRESHOLD}; consider using entity_ids to filter"
             )
+
+        if isinstance(relationships, list) and isinstance(entities, list):
+            selected_ids = set(entity_refs) if entity_refs is not None else {
+                e.get("id") for e in entities if isinstance(e, dict) and e.get("id")
+            }
+            selected_relationships = [
+                rel for rel in relationships
+                if isinstance(rel, dict)
+                and rel.get("from") in selected_ids
+                and rel.get("to") in selected_ids
+            ]
+            warnings.extend(readability_warnings(f"View '{vid or i}'", selected_ids, selected_relationships))
+            selected_entities = [
+                entity for entity in entities
+                if isinstance(entity, dict) and entity.get("id") in selected_ids
+            ]
+            warnings.extend(overview_layout_warning(f"View '{vid or i}'", view, selected_entities))
 
     return errors, warnings
 

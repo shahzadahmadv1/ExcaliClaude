@@ -114,6 +114,20 @@ MAX_LABEL_SEARCH_RADIUS = 264
 BRANCH_LABEL_OFFSET_X = 28
 BRANCH_LABEL_OFFSET_Y = 24
 BRANCH_LABEL_EXTRA_SPREAD = 64
+PORT_SLOT_MARGIN = 24
+PORT_SLOT_SPACING = 18
+ROUTE_EXIT_MARGIN = 28
+ROUTE_CHANNEL_SPACING = 22
+MAX_ROUTE_GAP_BONUS = 220
+EDGE_WARNING_DENSITY = 1.35
+EDGE_SPLIT_DENSITY = 1.6
+MAX_READABLE_EDGE_DEGREE = 5
+MAX_READABLE_OVERLOADED_NODES = 3
+SIDE_COLUMN_GAP = 120
+SIDE_GROUP_NODE_GAP = 28
+HYBRID_OVERVIEW_KINDS = {"architecture", "container", "context"}
+VALID_OVERVIEW_STYLES = {"auto", "pure-layers", "core-with-sides"}
+VALID_GROUP_PLACEMENTS = {"layer", "side-left", "side-right"}
 
 
 def stable_int(*parts: Any) -> int:
@@ -425,6 +439,142 @@ def diagram_kind_label(value: str | None) -> str:
     return labels.get(kind, kind.title())
 
 
+def normalize_overview_style(value: str | None) -> str:
+    style = (value or "auto").strip().lower()
+    aliases = {
+        "core_with_sides": "core-with-sides",
+        "core with sides": "core-with-sides",
+        "core": "core-with-sides",
+        "layers": "pure-layers",
+        "pure_layers": "pure-layers",
+    }
+    style = aliases.get(style, style)
+    return style if style in VALID_OVERVIEW_STYLES else "auto"
+
+
+def normalize_group_placement(value: str | None) -> str:
+    placement = (value or "layer").strip().lower()
+    aliases = {
+        "left": "side-left",
+        "right": "side-right",
+        "side_left": "side-left",
+        "side_right": "side-right",
+    }
+    placement = aliases.get(placement, placement)
+    return placement if placement in VALID_GROUP_PLACEMENTS else "layer"
+
+
+def hybrid_overview_candidate(spec: dict[str, Any]) -> bool:
+    if spec.get("layout", "flow") != "layers":
+        return False
+    if spec.get("view_mode") not in {None, "overview"}:
+        return False
+    return (spec.get("diagram_kind") or "dynamic").strip().lower() in HYBRID_OVERVIEW_KINDS
+
+
+def group_entities(nodes: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for node in nodes:
+        grouped[node.get("group", "")].append(node)
+    return grouped
+
+
+def infer_external_group_side(group_node_ids: set[str], edges: list[dict[str, Any]]) -> str:
+    outbound = 0
+    inbound = 0
+    for edge in edges:
+        source_in_group = edge.get("from") in group_node_ids
+        target_in_group = edge.get("to") in group_node_ids
+        if source_in_group and not target_in_group:
+            outbound += 1
+        elif target_in_group and not source_in_group:
+            inbound += 1
+    return "side-left" if outbound >= inbound else "side-right"
+
+
+def async_infrastructure_group(nodes_in_group: list[dict[str, Any]], edges: list[dict[str, Any]]) -> bool:
+    if not nodes_in_group:
+        return False
+
+    node_ids = {node["id"] for node in nodes_in_group}
+    queue_like = sum(1 for node in nodes_in_group if normalize_role(node.get("role")) in {"queue", "topic"})
+    infra_like = sum(1 for node in nodes_in_group if normalize_role(node.get("role")) == "infrastructure")
+    async_edges = sum(
+        1
+        for edge in edges
+        if (edge.get("from") in node_ids or edge.get("to") in node_ids)
+        and edge.get("kind") in {"async", "publish", "subscribe"}
+    )
+
+    if queue_like and queue_like >= max(1, len(nodes_in_group) // 2):
+        return True
+    return async_edges > 0 and (queue_like + infra_like) == len(nodes_in_group)
+
+
+def enrich_groups(
+    spec: dict[str, Any],
+    nodes: list[dict[str, Any]],
+    groups: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], str]:
+    enriched = [dict(group) for group in groups]
+    requested_style = normalize_overview_style(spec.get("overview_style"))
+    explicit_side = any(normalize_group_placement(group.get("placement")) != "layer" for group in enriched)
+
+    if not hybrid_overview_candidate(spec):
+        for group in enriched:
+            group["placement"] = normalize_group_placement(group.get("placement"))
+        resolved_style = "core-with-sides" if explicit_side else "pure-layers"
+        return enriched, resolved_style
+
+    nodes_by_group = group_entities(nodes)
+    inferred_placements: dict[str, str] = {}
+    if requested_style != "pure-layers":
+        for group in enriched:
+            explicit = normalize_group_placement(group.get("placement"))
+            if explicit != "layer":
+                inferred_placements[group["id"]] = explicit
+                continue
+
+            nodes_in_group = nodes_by_group.get(group["id"], [])
+            if not nodes_in_group:
+                inferred_placements[group["id"]] = "layer"
+                continue
+
+            external_like = sum(
+                1
+                for node in nodes_in_group
+                if (node.get("boundary") == "external") or normalize_role(node.get("role")) == "external"
+            )
+            if external_like >= max(1, len(nodes_in_group) // 2):
+                inferred_placements[group["id"]] = infer_external_group_side(
+                    {node["id"] for node in nodes_in_group},
+                    spec.get("edges", []),
+                )
+                continue
+
+            if async_infrastructure_group(nodes_in_group, spec.get("edges", [])):
+                inferred_placements[group["id"]] = "side-right"
+                continue
+
+            inferred_placements[group["id"]] = "layer"
+
+    inferred_side = any(placement != "layer" for placement in inferred_placements.values())
+    if explicit_side:
+        resolved_style = "core-with-sides"
+    elif requested_style == "auto":
+        resolved_style = "core-with-sides" if inferred_side else "pure-layers"
+    else:
+        resolved_style = requested_style
+
+    for group in enriched:
+        placement = normalize_group_placement(group.get("placement"))
+        if placement == "layer" and resolved_style == "core-with-sides":
+            placement = inferred_placements.get(group["id"], "layer")
+        group["placement"] = placement
+
+    return enriched, resolved_style
+
+
 def ensure(condition: bool, message: str) -> None:
     if not condition:
         raise ValueError(message)
@@ -466,6 +616,9 @@ class NodePlacement:
     y: int
     width: int
     height: int
+    depth: int = 0
+    lane_index: int = 0
+    placement_kind: str = "layer"
 
     @property
     def center_x(self) -> float:
@@ -485,6 +638,200 @@ class GroupPlacement:
     width: int
     height: int
     stroke_color: str = DEFAULT_GROUP_STROKE
+    placement: str = "layer"
+
+
+@dataclass
+class EdgePlan:
+    edge: dict[str, Any]
+    edge_id: str
+    source: NodePlacement
+    target: NodePlacement
+    start_side: str
+    end_side: str
+    start_offset: float = 0.0
+    end_offset: float = 0.0
+    channel_distance: float = 0.0
+    corridor_side: str | None = None
+    route_style: str = "default"
+    outer_left: float | None = None
+    outer_right: float | None = None
+    side_inner_left: float | None = None
+    side_inner_right: float | None = None
+
+
+@dataclass(frozen=True)
+class RoutedEdge:
+    edge_id: str
+    points: list[tuple[float, float]]
+
+
+def clamp_value(value: float, minimum: float, maximum: float) -> float:
+    if minimum > maximum:
+        return (minimum + maximum) / 2
+    return max(minimum, min(value, maximum))
+
+
+def edge_element_id(edge: dict[str, Any]) -> str:
+    return edge.get("id") or f"edge-{edge['from']}-{edge['to']}-{slugify(edge.get('label', 'link'))}"
+
+
+def quantize_int(value: float, step: int = 40) -> int:
+    return int(round(value / step) * step)
+
+
+def distributed_offsets(count: int, span: float, spacing: float) -> list[float]:
+    if count <= 1:
+        return [0.0] * count
+    usable_span = max(0.0, min(span, spacing * (count - 1)))
+    if usable_span == 0:
+        return [0.0] * count
+    step = usable_span / (count - 1)
+    start = -(usable_span / 2)
+    return [start + (index * step) for index in range(count)]
+
+
+def node_side_port_span(placement: NodePlacement, side: str) -> float:
+    if side in {"top", "bottom"}:
+        base = placement.width
+    else:
+        base = placement.height
+    multiplier = 0.55 if is_decision_node(placement.node) else 0.72
+    return max((base * multiplier) - (PORT_SLOT_MARGIN * 2), 0.0)
+
+
+def node_side_anchor(placement: NodePlacement, side: str, offset: float = 0.0) -> tuple[float, float]:
+    center_x = placement.center_x
+    center_y = placement.center_y
+    half_width = placement.width / 2
+    half_height = placement.height / 2
+
+    if is_decision_node(placement.node):
+        if side in {"top", "bottom"}:
+            dx = clamp_value(offset, -half_width + PORT_SLOT_MARGIN, half_width - PORT_SLOT_MARGIN)
+            dy = half_height * (1 - (abs(dx) / max(half_width, 1)))
+            return center_x + dx, center_y - dy if side == "top" else center_y + dy
+        dy = clamp_value(offset, -half_height + PORT_SLOT_MARGIN, half_height - PORT_SLOT_MARGIN)
+        dx = half_width * (1 - (abs(dy) / max(half_height, 1)))
+        return (center_x - dx if side == "left" else center_x + dx), center_y + dy
+
+    if side == "top":
+        dx = clamp_value(offset, -half_width + PORT_SLOT_MARGIN, half_width - PORT_SLOT_MARGIN)
+        return center_x + dx, placement.y
+    if side == "bottom":
+        dx = clamp_value(offset, -half_width + PORT_SLOT_MARGIN, half_width - PORT_SLOT_MARGIN)
+        return center_x + dx, placement.y + placement.height
+    if side == "left":
+        dy = clamp_value(offset, -half_height + PORT_SLOT_MARGIN, half_height - PORT_SLOT_MARGIN)
+        return placement.x, center_y + dy
+    dy = clamp_value(offset, -half_height + PORT_SLOT_MARGIN, half_height - PORT_SLOT_MARGIN)
+    return placement.x + placement.width, center_y + dy
+
+
+def preferred_connection_sides(
+    source: NodePlacement,
+    target: NodePlacement,
+    *,
+    layout: str,
+    direction: str,
+) -> tuple[str, str]:
+    dx = target.center_x - source.center_x
+    dy = target.center_y - source.center_y
+
+    if layout == "flow" and direction == "vertical":
+        if source.depth != target.depth:
+            return ("bottom", "top") if source.depth < target.depth else ("top", "bottom")
+        if source.lane_index != target.lane_index:
+            return ("right", "left") if dx >= 0 else ("left", "right")
+
+    if layout == "flow" and direction == "horizontal":
+        if source.depth != target.depth:
+            return ("right", "left") if source.depth < target.depth else ("left", "right")
+        if source.lane_index != target.lane_index:
+            return ("bottom", "top") if dy >= 0 else ("top", "bottom")
+
+    if abs(dx) >= abs(dy):
+        return ("right", "left") if dx >= 0 else ("left", "right")
+    return ("bottom", "top") if dy >= 0 else ("top", "bottom")
+
+
+def simplify_route_points(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    deduped: list[tuple[float, float]] = []
+    for x, y in points:
+        if deduped and abs(deduped[-1][0] - x) < 0.01 and abs(deduped[-1][1] - y) < 0.01:
+            continue
+        deduped.append((round(x, 2), round(y, 2)))
+
+    if len(deduped) <= 2:
+        return deduped
+
+    simplified = [deduped[0]]
+    for index, point in enumerate(deduped[1:-1], start=1):
+        prev_x, prev_y = simplified[-1]
+        next_x, next_y = deduped[index + 1]
+        same_x = abs(prev_x - point[0]) < 0.01 and abs(point[0] - next_x) < 0.01
+        same_y = abs(prev_y - point[1]) < 0.01 and abs(point[1] - next_y) < 0.01
+        if same_x or same_y:
+            continue
+        simplified.append(point)
+    simplified.append(deduped[-1])
+    return simplified
+
+
+def connected_axis_positions(
+    nodes: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    depths: dict[str, int],
+    group_index: dict[str, int],
+) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
+    node_lookup = {node["id"]: node for node in nodes}
+    neighbor_groups: dict[str, list[int]] = defaultdict(list)
+    neighbor_depths: dict[str, list[int]] = defaultdict(list)
+
+    for edge in edges:
+        source_id = edge["from"]
+        target_id = edge["to"]
+        source_group = group_index.get(node_lookup[source_id].get("group"), 0)
+        target_group = group_index.get(node_lookup[target_id].get("group"), 0)
+        source_depth = depths.get(source_id, 0)
+        target_depth = depths.get(target_id, 0)
+
+        neighbor_groups[source_id].append(target_group)
+        neighbor_groups[target_id].append(source_group)
+        neighbor_depths[source_id].append(target_depth)
+        neighbor_depths[target_id].append(source_depth)
+
+    return neighbor_groups, neighbor_depths
+
+
+def flow_gap_loads(
+    nodes: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    depths: dict[str, int],
+    group_index: dict[str, int],
+) -> tuple[dict[int, int], dict[int, int]]:
+    node_lookup = {node["id"]: node for node in nodes}
+    row_gap_load: dict[int, int] = defaultdict(int)
+    lane_gap_load: dict[int, int] = defaultdict(int)
+
+    for edge in edges:
+        source_depth = depths.get(edge["from"], 0)
+        target_depth = depths.get(edge["to"], 0)
+        low_depth, high_depth = sorted((source_depth, target_depth))
+        for gap_index in range(low_depth, high_depth):
+            row_gap_load[gap_index] += 1
+
+        source_lane = group_index.get(node_lookup[edge["from"]].get("group"), 0)
+        target_lane = group_index.get(node_lookup[edge["to"]].get("group"), 0)
+        low_lane, high_lane = sorted((source_lane, target_lane))
+        for gap_index in range(low_lane, high_lane):
+            lane_gap_load[gap_index] += 1
+
+    return row_gap_load, lane_gap_load
+
+
+def gap_bonus(load: int) -> int:
+    return min(max(0, load - 2) * ROUTE_CHANNEL_SPACING, MAX_ROUTE_GAP_BONUS)
 
 
 @dataclass
@@ -753,17 +1100,29 @@ class SceneBuilder:
 
         return rect
 
-    def add_arrow(self, edge: dict[str, Any], placements: dict[str, NodePlacement], elements_by_node: dict[str, dict[str, Any]]) -> None:
+    def add_arrow(
+        self,
+        edge: dict[str, Any],
+        placements: dict[str, NodePlacement],
+        elements_by_node: dict[str, dict[str, Any]],
+        *,
+        route: RoutedEdge | None = None,
+    ) -> None:
         source = placements[edge["from"]]
         target = placements[edge["to"]]
         edge_kind = edge.get("kind", "sync")
         style = EDGE_STYLES.get(edge_kind, EDGE_STYLES["sync"])
-        start_x, start_y, end_x, end_y = connection_points(source, target)
-        points = arrow_points(start_x, start_y, end_x, end_y)
+        if route is None:
+            start_x, start_y, end_x, end_y = connection_points(source, target)
+            points = arrow_points(start_x, start_y, end_x, end_y)
+        else:
+            points = route.points
+            start_x, start_y = points[0]
+            end_x, end_y = points[-1]
         dx = points[-1][0] - points[0][0]
         dy = points[-1][1] - points[0][1]
 
-        arrow_id = edge.get("id") or f"edge-{edge['from']}-{edge['to']}-{slugify(edge.get('label', 'link'))}"
+        arrow_id = edge_element_id(edge)
         arrow = self.base_element(arrow_id, "arrow", int(start_x), int(start_y), int(dx), int(dy))
         arrow.update(
             {
@@ -939,6 +1298,422 @@ def node_boundary_point(placement: NodePlacement, toward_x: float, toward_y: flo
     return center_x + (dx * scale), center_y + (dy * scale)
 
 
+def assign_edge_port_offsets(plans: list[EdgePlan]) -> None:
+    side_buckets: dict[tuple[str, str], list[tuple[EdgePlan, str]]] = defaultdict(list)
+    for plan in plans:
+        side_buckets[(plan.source.node["id"], plan.start_side)].append((plan, "start"))
+        side_buckets[(plan.target.node["id"], plan.end_side)].append((plan, "end"))
+
+    for (_node_id, side), entries in side_buckets.items():
+        first_plan, endpoint_kind = entries[0]
+        placement = first_plan.source if endpoint_kind == "start" else first_plan.target
+        ordered = sorted(
+            entries,
+            key=lambda item: (
+                item[0].target.center_x if item[1] == "start" and side in {"top", "bottom"} else
+                item[0].source.center_x if item[1] == "end" and side in {"top", "bottom"} else
+                item[0].target.center_y if item[1] == "start" else
+                item[0].source.center_y,
+                item[0].edge.get("sequence") is None,
+                item[0].edge.get("sequence") or 0,
+                item[0].edge_id,
+            ),
+        )
+        offsets = distributed_offsets(len(ordered), node_side_port_span(placement, side), PORT_SLOT_SPACING)
+        for (plan, endpoint), offset in zip(ordered, offsets):
+            if endpoint == "start":
+                plan.start_offset = offset
+            else:
+                plan.end_offset = offset
+
+
+def forced_side_for_corridor(placement: NodePlacement, corridor_side: str) -> str:
+    if placement.placement_kind == "side-left":
+        return "right"
+    if placement.placement_kind == "side-right":
+        return "left"
+    return "left" if corridor_side == "left" else "right"
+
+
+def assign_edge_channel_offsets(plans: list[EdgePlan], *, layout: str, direction: str) -> None:
+    buckets: dict[tuple[Any, ...], list[EdgePlan]] = defaultdict(list)
+
+    for plan in plans:
+        if plan.route_style == "side-vertical" and plan.corridor_side in {"left", "right"}:
+            buckets[("side", plan.corridor_side)].append(plan)
+            continue
+        if plan.start_side in {"top", "bottom"}:
+            downward = plan.start_side == "bottom"
+            if layout == "flow":
+                if direction == "vertical":
+                    band_index = plan.source.depth
+                else:
+                    band_index = plan.source.lane_index
+                key = ("horizontal", direction, downward, band_index)
+            else:
+                anchor = plan.source.y + plan.source.height if downward else plan.source.y
+                key = ("horizontal", downward, quantize_int(anchor))
+        else:
+            rightward = plan.start_side == "right"
+            if layout == "flow":
+                if direction == "vertical":
+                    band_index = plan.source.lane_index
+                else:
+                    band_index = plan.source.depth
+                key = ("vertical", direction, rightward, band_index)
+            else:
+                anchor = plan.source.x + plan.source.width if rightward else plan.source.x
+                key = ("vertical", rightward, quantize_int(anchor))
+        buckets[key].append(plan)
+
+    for plans_in_bucket in buckets.values():
+        ordered = sorted(
+            plans_in_bucket,
+            key=lambda plan: (
+                min(plan.source.center_x, plan.target.center_x) if plan.start_side in {"top", "bottom"} else min(plan.source.center_y, plan.target.center_y),
+                max(plan.source.center_x, plan.target.center_x) if plan.start_side in {"top", "bottom"} else max(plan.source.center_y, plan.target.center_y),
+                plan.edge.get("sequence") is None,
+                plan.edge.get("sequence") or 0,
+                plan.edge_id,
+            ),
+        )
+        for index, plan in enumerate(ordered):
+            plan.channel_distance = ROUTE_EXIT_MARGIN + (index * ROUTE_CHANNEL_SPACING)
+
+
+def build_routed_edge(plan: EdgePlan) -> RoutedEdge:
+    start = node_side_anchor(plan.source, plan.start_side, plan.start_offset)
+    end = node_side_anchor(plan.target, plan.end_side, plan.end_offset)
+
+    if plan.route_style == "side-vertical" and plan.corridor_side in {"left", "right"}:
+        if plan.corridor_side == "left" and plan.side_inner_right is not None:
+            corridor_x = plan.side_inner_right + plan.channel_distance
+        elif plan.corridor_side == "right" and plan.side_inner_left is not None:
+            corridor_x = plan.side_inner_left - plan.channel_distance
+        else:
+            return RoutedEdge(plan.edge_id, arrow_points(start[0], start[1], end[0], end[1]))
+        points = simplify_route_points([start, (corridor_x, start[1]), (corridor_x, end[1]), end])
+        return RoutedEdge(plan.edge_id, points)
+
+    if plan.route_style == "outer-vertical" and plan.corridor_side in {"left", "right"} and plan.outer_left is not None and plan.outer_right is not None:
+        going_down = plan.target.center_y >= plan.source.center_y
+        exit_y = (
+            plan.source.y + plan.source.height + plan.channel_distance
+            if going_down
+            else plan.source.y - plan.channel_distance
+        )
+        approach_y = (
+            plan.target.y - plan.channel_distance
+            if going_down
+            else plan.target.y + plan.target.height + plan.channel_distance
+        )
+        corridor_x = (
+            plan.outer_left - plan.channel_distance
+            if plan.corridor_side == "left"
+            else plan.outer_right + plan.channel_distance
+        )
+        points = simplify_route_points(
+            [
+                start,
+                (start[0], exit_y),
+                (corridor_x, exit_y),
+                (corridor_x, approach_y),
+                (end[0], approach_y),
+                end,
+            ]
+        )
+        return RoutedEdge(plan.edge_id, points)
+
+    if plan.start_side in {"top", "bottom"} and plan.end_side in {"top", "bottom"}:
+        preferred_y = (plan.source.y + plan.source.height + plan.channel_distance) if plan.start_side == "bottom" else (plan.source.y - plan.channel_distance)
+        low = min(start[1], end[1]) + 18
+        high = max(start[1], end[1]) - 18
+        if low >= high:
+            points = arrow_points(start[0], start[1], end[0], end[1])
+        else:
+            channel_y = clamp_value(preferred_y, low, high)
+            points = simplify_route_points([start, (start[0], channel_y), (end[0], channel_y), end])
+        return RoutedEdge(plan.edge_id, points)
+
+    if plan.start_side in {"left", "right"} and plan.end_side in {"left", "right"}:
+        preferred_x = (plan.source.x + plan.source.width + plan.channel_distance) if plan.start_side == "right" else (plan.source.x - plan.channel_distance)
+        low = min(start[0], end[0]) + 18
+        high = max(start[0], end[0]) - 18
+        if low >= high:
+            points = arrow_points(start[0], start[1], end[0], end[1])
+        else:
+            channel_x = clamp_value(preferred_x, low, high)
+            points = simplify_route_points([start, (channel_x, start[1]), (channel_x, end[1]), end])
+        return RoutedEdge(plan.edge_id, points)
+
+    return RoutedEdge(plan.edge_id, arrow_points(start[0], start[1], end[0], end[1]))
+
+
+def plan_edge_routes(spec: dict[str, Any], placements: dict[str, NodePlacement]) -> dict[str, RoutedEdge]:
+    layout = spec.get("layout", "flow")
+    direction = spec.get("direction", "vertical")
+    plans: list[EdgePlan] = []
+    core_placements = [placement for placement in placements.values() if placement.placement_kind == "layer"]
+    bounds_source = core_placements or list(placements.values())
+    outer_left = min((placement.x for placement in bounds_source), default=CANVAS_MARGIN) - GROUP_PADDING_X
+    outer_right = max((placement.x + placement.width for placement in bounds_source), default=CANVAS_MARGIN) + GROUP_PADDING_X
+    side_left = [placement for placement in placements.values() if placement.placement_kind == "side-left"]
+    side_right = [placement for placement in placements.values() if placement.placement_kind == "side-right"]
+    side_inner_right = max((placement.x + placement.width for placement in side_left), default=None)
+    side_inner_left = min((placement.x for placement in side_right), default=None)
+
+    for edge in spec["edges"]:
+        source = placements[edge["from"]]
+        target = placements[edge["to"]]
+        corridor_side: str | None = None
+        route_style = "default"
+        if source.placement_kind != "layer" or target.placement_kind != "layer":
+            if source.placement_kind == "side-left" or target.placement_kind == "side-left":
+                corridor_side = "left"
+            elif source.placement_kind == "side-right" or target.placement_kind == "side-right":
+                corridor_side = "right"
+            if corridor_side is not None:
+                start_side = forced_side_for_corridor(source, corridor_side)
+                end_side = forced_side_for_corridor(target, corridor_side)
+                route_style = "side-vertical"
+            else:
+                start_side, end_side = preferred_connection_sides(
+                    source,
+                    target,
+                    layout=layout,
+                    direction=direction,
+                )
+        else:
+            start_side, end_side = preferred_connection_sides(
+                source,
+                target,
+                layout=layout,
+                direction=direction,
+            )
+        if layout == "layers" and source.placement_kind == "layer" and target.placement_kind == "layer" and abs(source.lane_index - target.lane_index) > 1:
+            start_side, end_side = ("bottom", "top") if target.center_y >= source.center_y else ("top", "bottom")
+            corridor_side = preferred_outer_corridor(source, target, outer_left, outer_right)
+            route_style = "outer-vertical"
+        plans.append(
+            EdgePlan(
+                edge=edge,
+                edge_id=edge_element_id(edge),
+                source=source,
+                target=target,
+                start_side=start_side,
+                end_side=end_side,
+                corridor_side=corridor_side,
+                route_style=route_style,
+                outer_left=outer_left,
+                outer_right=outer_right,
+                side_inner_left=side_inner_left,
+                side_inner_right=side_inner_right,
+            )
+        )
+
+    assign_edge_port_offsets(plans)
+    assign_edge_channel_offsets(plans, layout=layout, direction=direction)
+    return {plan.edge_id: build_routed_edge(plan) for plan in plans}
+
+
+def placement_obstacle_box(placement: NodePlacement, *, pad_x: int = 12, pad_y: int = 10) -> tuple[float, float, float, float]:
+    return (
+        placement.x - pad_x,
+        placement.y - pad_y,
+        placement.x + placement.width + pad_x,
+        placement.y + placement.height + pad_y,
+    )
+
+
+def orthogonal_segment_intersects_box(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    box: tuple[float, float, float, float],
+) -> bool:
+    left, top, right, bottom = box
+    x1, y1 = start
+    x2, y2 = end
+
+    if abs(x1 - x2) < 0.01:
+        if x1 <= left or x1 >= right:
+            return False
+        low, high = sorted((y1, y2))
+        return low < bottom and high > top
+
+    if abs(y1 - y2) < 0.01:
+        if y1 <= top or y1 >= bottom:
+            return False
+        low, high = sorted((x1, x2))
+        return low < right and high > left
+
+    seg_left, seg_right = sorted((x1, x2))
+    seg_top, seg_bottom = sorted((y1, y2))
+    return seg_left < right and seg_right > left and seg_top < bottom and seg_bottom > top
+
+
+def route_overlap_metrics(
+    spec: dict[str, Any],
+    placements: dict[str, NodePlacement],
+    routes: dict[str, RoutedEdge],
+) -> tuple[int, dict[str, int]]:
+    overlap_counts: dict[str, int] = defaultdict(int)
+
+    for edge in spec["edges"]:
+        edge_id = edge_element_id(edge)
+        route = routes.get(edge_id)
+        if route is None:
+            continue
+        for node_id, placement in placements.items():
+            if node_id in {edge["from"], edge["to"]}:
+                continue
+            box = placement_obstacle_box(placement)
+            if any(
+                orthogonal_segment_intersects_box(start, end, box)
+                for start, end in zip(route.points, route.points[1:])
+            ):
+                overlap_counts[node_id] += 1
+
+    return sum(overlap_counts.values()), overlap_counts
+
+
+def connected_center_x(
+    node_id: str,
+    spec: dict[str, Any],
+    placements: dict[str, NodePlacement],
+) -> float | None:
+    centers: list[float] = []
+    for edge in spec.get("edges", []):
+        if edge.get("from") == node_id and edge.get("to") in placements:
+            centers.append(placements[edge["to"]].center_x)
+        elif edge.get("to") == node_id and edge.get("from") in placements:
+            centers.append(placements[edge["from"]].center_x)
+    if not centers:
+        return None
+    return sum(centers) / len(centers)
+
+
+def preferred_outer_corridor(
+    source: NodePlacement,
+    target: NodePlacement,
+    outer_left: float,
+    outer_right: float,
+) -> str:
+    left_cost = abs(source.center_x - outer_left) + abs(target.center_x - outer_left)
+    right_cost = abs(source.center_x - outer_right) + abs(target.center_x - outer_right)
+    return "left" if left_cost <= right_cost else "right"
+
+
+def nudge_transit_obstacles(
+    spec: dict[str, Any],
+    placements: dict[str, NodePlacement],
+    group_placements: list[GroupPlacement],
+) -> dict[str, NodePlacement]:
+    layout = spec.get("layout", "flow")
+    direction = spec.get("direction", "vertical")
+    if layout not in {"flow", "layers"}:
+        return placements
+
+    routes = plan_edge_routes(spec, placements)
+    total_overlaps, node_overlaps = route_overlap_metrics(spec, placements, routes)
+    if total_overlaps == 0:
+        return placements
+
+    group_by_id = {group.group_id: group for group in group_placements}
+    adjusted = dict(placements)
+    cell_counts: dict[tuple[int, int], int] = defaultdict(int)
+    group_counts: dict[str, int] = defaultdict(int)
+    for placement in placements.values():
+        cell_counts[(placement.depth, placement.lane_index)] += 1
+        group_counts[placement.node.get("group", "")] += 1
+
+    if layout == "layers":
+        layer_groups = [group for group in group_placements if group.placement == "layer"]
+        if layer_groups:
+            max_group_right = max(group.x + group.width for group in layer_groups)
+            for group in layer_groups:
+                group.width = max_group_right - group.x
+
+    for node_id, overlap_count in sorted(node_overlaps.items(), key=lambda item: (-item[1], item[0])):
+        placement = adjusted[node_id]
+        if overlap_count <= 0:
+            continue
+
+        group = group_by_id.get(placement.node.get("group", ""))
+        if group is None:
+            continue
+
+        if layout == "flow":
+            if direction != "vertical" or cell_counts[(placement.depth, placement.lane_index)] != 1:
+                continue
+        elif placement.placement_kind != "layer" or group_counts[placement.node.get("group", "")] != 1:
+            continue
+
+        min_x = group.x + GROUP_PADDING_X
+        max_x = group.x + group.width - placement.width - GROUP_PADDING_X
+        if max_x - min_x < 24:
+            continue
+
+        preferred_center = connected_center_x(node_id, spec, adjusted)
+        preferred_x = placement.x if preferred_center is None else int(preferred_center - (placement.width / 2))
+        candidate_xs: set[int] = {
+            int(min_x),
+            int(max_x),
+            int((min_x + max_x) / 2),
+            int(min_x + ((max_x - min_x) / 3)),
+            int(min_x + (2 * (max_x - min_x) / 3)),
+            int(clamp_value(preferred_x, min_x, max_x)),
+        }
+        if layout == "layers":
+            for step_x in range(int(min_x), int(max_x) + 1, 80):
+                candidate_xs.add(step_x)
+        candidate_xs = set(candidate_xs)
+
+        current_score = (
+            total_overlaps,
+            overlap_count,
+            abs(placement.x - preferred_x),
+            0,
+        )
+        best_score = current_score
+        best_placement = placement
+        best_routes = routes
+
+        for candidate_x in sorted(candidate_xs):
+            if abs(candidate_x - placement.x) < 2:
+                continue
+
+            candidate_placement = NodePlacement(
+                node=placement.node,
+                x=candidate_x,
+                y=placement.y,
+                width=placement.width,
+                height=placement.height,
+                depth=placement.depth,
+                lane_index=placement.lane_index,
+            )
+            trial_placements = dict(adjusted)
+            trial_placements[node_id] = candidate_placement
+            trial_routes = plan_edge_routes(spec, trial_placements)
+            trial_total, trial_overlaps = route_overlap_metrics(spec, trial_placements, trial_routes)
+            trial_score = (
+                trial_total,
+                trial_overlaps.get(node_id, 0),
+                abs(candidate_x - preferred_x),
+                abs(candidate_x - placement.x),
+            )
+            if trial_score < best_score:
+                best_score = trial_score
+                best_placement = candidate_placement
+                best_routes = trial_routes
+
+        if best_placement is not placement:
+            adjusted[node_id] = best_placement
+            routes = best_routes
+            total_overlaps, node_overlaps = route_overlap_metrics(spec, adjusted, routes)
+
+    return adjusted
+
+
 def edge_label_candidates(
     anchor_x: float,
     anchor_y: float,
@@ -1036,6 +1811,17 @@ def validate_spec(spec: dict[str, Any]) -> None:
     ensure(layout in {"flow", "layers"}, "Spec 'layout' must be either 'flow' or 'layers'.")
     direction = spec.get("direction", "vertical")
     ensure(direction in {"vertical", "horizontal"}, "Spec 'direction' must be either 'vertical' or 'horizontal'.")
+    if "overview_style" in spec:
+        ensure(
+            normalize_overview_style(spec.get("overview_style")) == spec.get("overview_style"),
+            "Spec 'overview_style' must be 'auto', 'pure-layers', or 'core-with-sides'.",
+        )
+    for group in spec.get("groups", []):
+        if isinstance(group, dict) and "placement" in group:
+            ensure(
+                normalize_group_placement(group.get("placement")) == group.get("placement"),
+                "Group 'placement' must be 'layer', 'side-left', or 'side-right'.",
+            )
 
 
 def complete_groups(spec: dict[str, Any], nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1082,6 +1868,9 @@ def layout_flow(
 
     for node in nodes:
         node.setdefault("group", fallback_group)
+
+    neighbor_groups, neighbor_depths = connected_axis_positions(nodes, edges, depths, group_index)
+    row_gap_load, lane_gap_load = flow_gap_loads(nodes, edges, depths, group_index)
 
     cell_map: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
     for node in nodes:
@@ -1134,15 +1923,20 @@ def layout_flow(
     if direction == "vertical":
         lane_x: dict[str, int] = {}
         current_x = CANVAS_MARGIN
-        for group in groups:
+        for index, group in enumerate(groups):
+            column = group_index[group["id"]]
             lane_x[group["id"]] = current_x
-            current_x += lane_sizes[group["id"]] + GROUP_GAP
+            current_x += lane_sizes[group["id"]]
+            if index < len(groups) - 1:
+                current_x += GROUP_GAP + gap_bonus(lane_gap_load.get(column, 0))
 
         row_y: dict[int, int] = {}
         current_y = top_y
         for depth in range(max_depth + 1):
             row_y[depth] = current_y
-            current_y += row_sizes[depth] + ROW_GAP
+            current_y += row_sizes[depth]
+            if depth < max_depth:
+                current_y += ROW_GAP + gap_bonus(row_gap_load.get(depth, 0))
 
         content_bottom = top_y
         for group in groups:
@@ -1150,7 +1944,14 @@ def layout_flow(
             lane_width = lane_sizes[group["id"]]
             column = group_index[group["id"]]
             for depth in range(max_depth + 1):
-                same_cell = sorted(cell_map.get((depth, column), []), key=lambda item: item.get("order", 0))
+                same_cell = sorted(
+                    cell_map.get((depth, column), []),
+                    key=lambda item: (
+                        (sum(neighbor_groups[item["id"]]) / len(neighbor_groups[item["id"]])) if neighbor_groups.get(item["id"]) else column,
+                        item.get("order", 0),
+                        item["id"],
+                    ),
+                )
                 if not same_cell:
                     continue
                 cell_total = sum(node_dimensions(node)[0] for node in same_cell) + (COLUMN_GAP * (len(same_cell) - 1))
@@ -1159,7 +1960,15 @@ def layout_flow(
                     width, height = node_dimensions(node)
                     x = cursor_x
                     y = int(row_y[depth] + ((row_sizes[depth] - height) / 2))
-                    placements[node["id"]] = NodePlacement(node=node, x=x, y=y, width=width, height=height)
+                    placements[node["id"]] = NodePlacement(
+                        node=node,
+                        x=x,
+                        y=y,
+                        width=width,
+                        height=height,
+                        depth=depth,
+                        lane_index=column,
+                    )
                     cursor_x += width + COLUMN_GAP
                     content_bottom = max(content_bottom, y + height)
 
@@ -1176,19 +1985,24 @@ def layout_flow(
                 )
             )
 
-        return placements, group_placements, current_x - GROUP_GAP, content_bottom
+        return placements, group_placements, current_x, content_bottom
 
     lane_y: dict[str, int] = {}
     current_y = top_y
-    for group in groups:
+    for index, group in enumerate(groups):
+        column = group_index[group["id"]]
         lane_y[group["id"]] = current_y
-        current_y += lane_sizes[group["id"]] + GROUP_GAP
+        current_y += lane_sizes[group["id"]]
+        if index < len(groups) - 1:
+            current_y += GROUP_GAP + gap_bonus(lane_gap_load.get(column, 0))
 
     column_x: dict[int, int] = {}
     current_x = CANVAS_MARGIN
     for depth in range(max_depth + 1):
         column_x[depth] = current_x
-        current_x += row_sizes[depth] + ROW_GAP
+        current_x += row_sizes[depth]
+        if depth < max_depth:
+            current_x += ROW_GAP + gap_bonus(row_gap_load.get(depth, 0))
 
     content_right = CANVAS_MARGIN
     for group in groups:
@@ -1196,7 +2010,14 @@ def layout_flow(
         lane_height = lane_sizes[group["id"]]
         column = group_index[group["id"]]
         for depth in range(max_depth + 1):
-            same_cell = sorted(cell_map.get((depth, column), []), key=lambda item: item.get("order", 0))
+            same_cell = sorted(
+                cell_map.get((depth, column), []),
+                key=lambda item: (
+                    (sum(neighbor_depths[item["id"]]) / len(neighbor_depths[item["id"]])) if neighbor_depths.get(item["id"]) else depth,
+                    item.get("order", 0),
+                    item["id"],
+                ),
+            )
             if not same_cell:
                 continue
             cell_total = sum(node_dimensions(node)[1] for node in same_cell) + (COLUMN_GAP * (len(same_cell) - 1))
@@ -1205,7 +2026,15 @@ def layout_flow(
                 width, height = node_dimensions(node)
                 x = int(column_x[depth] + ((row_sizes[depth] - width) / 2))
                 y = cursor_y
-                placements[node["id"]] = NodePlacement(node=node, x=x, y=y, width=width, height=height)
+                placements[node["id"]] = NodePlacement(
+                    node=node,
+                    x=x,
+                    y=y,
+                    width=width,
+                    height=height,
+                    depth=depth,
+                    lane_index=column,
+                )
                 cursor_y += height + COLUMN_GAP
                 content_right = max(content_right, x + width)
 
@@ -1222,28 +2051,39 @@ def layout_flow(
             )
         )
 
-    return placements, group_placements, content_right, current_y - GROUP_GAP
+    return placements, group_placements, content_right, current_y
 
 
-def layout_layers(
+def layout_layers_pure(
     spec: dict[str, Any],
     nodes: list[dict[str, Any]],
     groups: list[dict[str, Any]],
     top_y: int,
+    *,
+    start_x: int = CANVAS_MARGIN,
 ) -> tuple[dict[str, NodePlacement], list[GroupPlacement], int, int]:
-    del spec
     group_nodes: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    group_index = {group["id"]: index for index, group in enumerate(groups)}
     for node in nodes:
         node.setdefault("group", groups[0]["id"])
         group_nodes[node["group"]].append(node)
 
+    node_group_index = {node["id"]: group_index.get(node["group"], 0) for node in nodes}
+    group_gap_load: dict[int, int] = defaultdict(int)
+    for edge in spec.get("edges", []):
+        if edge.get("from") not in node_group_index or edge.get("to") not in node_group_index:
+            continue
+        low_group, high_group = sorted((node_group_index[edge["from"]], node_group_index[edge["to"]]))
+        for gap_index in range(low_group, high_group):
+            group_gap_load[gap_index] += 1
+
     placements: dict[str, NodePlacement] = {}
     group_placements: list[GroupPlacement] = []
     current_y = top_y
-    max_right = CANVAS_MARGIN
+    max_right = start_x
 
-    for group in groups:
-        nodes_in_group = sorted(group_nodes.get(group["id"], []), key=lambda item: item.get("order", 0))
+    for index, group in enumerate(groups):
+        nodes_in_group = sorted(group_nodes.get(group["id"], []), key=lambda item: (item.get("order", 0), item["id"]))
         if not nodes_in_group:
             continue
 
@@ -1252,28 +2092,206 @@ def layout_layers(
         header_height = 28
         group_height = max(height for _, height in node_sizes) + (GROUP_PADDING_Y * 2) + header_height
 
-        cursor_x = CANVAS_MARGIN + GROUP_PADDING_X
-        for node, (width, height) in zip(nodes_in_group, node_sizes):
+        cursor_x = start_x + GROUP_PADDING_X
+        for depth, (node, (width, height)) in enumerate(zip(nodes_in_group, node_sizes)):
             x = cursor_x
             y = int(current_y + header_height + ((group_height - header_height - height) / 2))
-            placements[node["id"]] = NodePlacement(node=node, x=x, y=y, width=width, height=height)
+            placements[node["id"]] = NodePlacement(
+                node=node,
+                x=x,
+                y=y,
+                width=width,
+                height=height,
+                depth=depth,
+                lane_index=group_index.get(group["id"], 0),
+                placement_kind=normalize_group_placement(group.get("placement")),
+            )
             cursor_x += width + COLUMN_GAP
 
         group_placements.append(
             GroupPlacement(
                 group_id=group["id"],
                 label=group.get("label", group["id"].replace("-", " ").title()),
-                x=CANVAS_MARGIN,
+                x=start_x,
                 y=current_y,
                 width=group_width,
                 height=group_height,
                 stroke_color=group.get("strokeColor", DEFAULT_GROUP_STROKE),
+                placement=normalize_group_placement(group.get("placement")),
             )
         )
-        current_y += group_height + GROUP_GAP
-        max_right = max(max_right, CANVAS_MARGIN + group_width)
+        current_y += group_height
+        if index < len(groups) - 1:
+            current_y += GROUP_GAP + gap_bonus(group_gap_load.get(group_index.get(group["id"], 0), 0))
+        max_right = max(max_right, start_x + group_width)
 
-    return placements, group_placements, max_right, current_y - GROUP_GAP
+    return placements, group_placements, max_right, current_y
+
+
+def connected_centers(
+    node_id: str,
+    spec: dict[str, Any],
+    placements: dict[str, NodePlacement],
+    *,
+    placement_kind: str | None = None,
+) -> list[tuple[float, float]]:
+    centers: list[tuple[float, float]] = []
+    for edge in spec.get("edges", []):
+        other_id: str | None = None
+        if edge.get("from") == node_id:
+            other_id = edge.get("to")
+        elif edge.get("to") == node_id:
+            other_id = edge.get("from")
+        if other_id not in placements:
+            continue
+        other = placements[other_id]
+        if placement_kind is not None and other.placement_kind != placement_kind:
+            continue
+        centers.append((other.center_x, other.center_y))
+    return centers
+
+
+def side_group_dimensions(nodes_in_group: list[dict[str, Any]]) -> tuple[int, int]:
+    node_sizes = [node_dimensions(node) for node in nodes_in_group]
+    header_height = 28
+    group_width = max(width for width, _ in node_sizes) + (GROUP_PADDING_X * 2)
+    group_height = (
+        header_height
+        + (GROUP_PADDING_Y * 2)
+        + sum(height for _, height in node_sizes)
+        + (SIDE_GROUP_NODE_GAP * (len(node_sizes) - 1))
+    )
+    return group_width, group_height
+
+
+def layout_layers_with_sides(
+    spec: dict[str, Any],
+    nodes: list[dict[str, Any]],
+    groups: list[dict[str, Any]],
+    top_y: int,
+) -> tuple[dict[str, NodePlacement], list[GroupPlacement], int, int]:
+    left_groups = [group for group in groups if normalize_group_placement(group.get("placement")) == "side-left"]
+    right_groups = [group for group in groups if normalize_group_placement(group.get("placement")) == "side-right"]
+    core_groups = [group for group in groups if normalize_group_placement(group.get("placement")) == "layer"]
+    if not core_groups:
+        fallback_groups = [dict(group, placement="layer") for group in groups]
+        return layout_layers_pure(spec, nodes, fallback_groups, top_y)
+
+    nodes_by_group = group_entities(nodes)
+    left_widths = [side_group_dimensions(nodes_by_group.get(group["id"], []))[0] for group in left_groups if nodes_by_group.get(group["id"])]
+    core_start_x = CANVAS_MARGIN
+    if left_widths:
+        core_start_x += sum(left_widths) + (GROUP_GAP * max(0, len(left_widths) - 1)) + SIDE_COLUMN_GAP
+
+    core_node_ids = {node["id"] for node in nodes if node.get("group") in {group["id"] for group in core_groups}}
+    core_nodes = [node for node in nodes if node["id"] in core_node_ids]
+    core_edges = [
+        edge for edge in spec.get("edges", [])
+        if edge.get("from") in core_node_ids and edge.get("to") in core_node_ids
+    ]
+    core_spec = dict(spec, edges=core_edges)
+    placements, group_placements, content_width, content_bottom = layout_layers_pure(
+        core_spec,
+        core_nodes,
+        core_groups,
+        top_y,
+        start_x=core_start_x,
+    )
+
+    core_left = min((group.x for group in group_placements), default=core_start_x)
+    core_right = max((group.x + group.width for group in group_placements), default=content_width)
+    left_x = CANVAS_MARGIN
+    right_x = core_right + SIDE_COLUMN_GAP
+    max_right = max(content_width, core_right)
+
+    def add_side_group(group: dict[str, Any], group_x: int) -> tuple[GroupPlacement | None, int]:
+        nodes_in_group = nodes_by_group.get(group["id"], [])
+        if not nodes_in_group:
+            return None, group_x
+
+        connected_y = []
+        for node in nodes_in_group:
+            connected_y.extend(center_y for _center_x, center_y in connected_centers(node["id"], spec, placements, placement_kind="layer"))
+        nodes_with_targets = []
+        for node in nodes_in_group:
+            linked_centers = connected_centers(node["id"], spec, placements, placement_kind="layer")
+            target_y = sum(center_y for _center_x, center_y in linked_centers) / len(linked_centers) if linked_centers else None
+            nodes_with_targets.append((node, target_y))
+
+        nodes_with_targets.sort(key=lambda item: (item[1] if item[1] is not None else float("inf"), item[0].get("order", 0), item[0]["id"]))
+        ordered_nodes = [node for node, _target_y in nodes_with_targets]
+        target_center_y = (
+            sum(connected_y) / len(connected_y)
+            if connected_y
+            else max(top_y + 80, (content_bottom + top_y) / 2)
+        )
+
+        group_width, group_height = side_group_dimensions(ordered_nodes)
+        group_top = int(max(top_y, target_center_y - (group_height / 2)))
+        header_height = 28
+        cursor_y = group_top + header_height + GROUP_PADDING_Y
+
+        for depth, node in enumerate(ordered_nodes):
+            width, height = node_dimensions(node)
+            x = int(group_x + ((group_width - width) / 2))
+            placements[node["id"]] = NodePlacement(
+                node=node,
+                x=x,
+                y=cursor_y,
+                width=width,
+                height=height,
+                depth=depth,
+                lane_index=groups.index(group),
+                placement_kind=normalize_group_placement(group.get("placement")),
+            )
+            cursor_y += height + SIDE_GROUP_NODE_GAP
+
+        group_placement = GroupPlacement(
+            group_id=group["id"],
+            label=group.get("label", group["id"].replace("-", " ").title()),
+            x=group_x,
+            y=group_top,
+            width=group_width,
+            height=group_height,
+            stroke_color=group.get("strokeColor", DEFAULT_GROUP_STROKE),
+            placement=normalize_group_placement(group.get("placement")),
+        )
+        return group_placement, group_x + group_width
+
+    for index, group in enumerate(left_groups):
+        placement, group_right = add_side_group(group, left_x)
+        if placement is None:
+            continue
+        group_placements.append(placement)
+        content_bottom = max(content_bottom, placement.y + placement.height)
+        max_right = max(max_right, group_right)
+        left_x = group_right + (GROUP_GAP if index < len(left_groups) - 1 else SIDE_COLUMN_GAP)
+
+    for index, group in enumerate(right_groups):
+        placement, group_right = add_side_group(group, right_x)
+        if placement is None:
+            continue
+        group_placements.append(placement)
+        content_bottom = max(content_bottom, placement.y + placement.height)
+        max_right = max(max_right, group_right)
+        right_x = group_right + (GROUP_GAP if index < len(right_groups) - 1 else SIDE_COLUMN_GAP)
+
+    ordered_group_ids = [group["id"] for group in groups]
+    group_placements.sort(key=lambda placement: ordered_group_ids.index(placement.group_id))
+    return placements, group_placements, max_right, content_bottom
+
+
+def layout_layers(
+    spec: dict[str, Any],
+    nodes: list[dict[str, Any]],
+    groups: list[dict[str, Any]],
+    top_y: int,
+    *,
+    overview_style: str = "pure-layers",
+) -> tuple[dict[str, NodePlacement], list[GroupPlacement], int, int]:
+    if overview_style == "core-with-sides":
+        return layout_layers_with_sides(spec, nodes, groups, top_y)
+    return layout_layers_pure(spec, nodes, groups, top_y)
 
 
 def add_title_block(builder: SceneBuilder, spec: dict[str, Any]) -> int:
@@ -1495,6 +2513,7 @@ def build_scene(spec: dict[str, Any]) -> dict[str, Any]:
     validate_spec(spec)
     nodes = [dict(node, role=normalize_role(node.get("role"))) for node in spec["nodes"]]
     groups = complete_groups(spec, nodes)
+    groups, overview_style = enrich_groups(spec, nodes, groups)
     ensure(groups, "Could not derive diagram groups.")
 
     builder = SceneBuilder(title=spec["title"])
@@ -1503,7 +2522,15 @@ def build_scene(spec: dict[str, Any]) -> dict[str, Any]:
     if spec.get("layout", "flow") == "flow":
         placements, group_placements, content_width, _ = layout_flow(spec, nodes, groups, top_y)
     else:
-        placements, group_placements, content_width, _ = layout_layers(spec, nodes, groups, top_y)
+        placements, group_placements, content_width, _ = layout_layers(
+            spec,
+            nodes,
+            groups,
+            top_y,
+            overview_style=overview_style,
+        )
+    placements = nudge_transit_obstacles(spec, placements, group_placements)
+    edge_routes = plan_edge_routes(spec, placements)
 
     for group_placement in group_placements:
         builder.add_group(group_placement)
@@ -1514,7 +2541,7 @@ def build_scene(spec: dict[str, Any]) -> dict[str, Any]:
         elements_by_node[node["id"]] = element
 
     for edge in spec["edges"]:
-        builder.add_arrow(edge, placements, elements_by_node)
+        builder.add_arrow(edge, placements, elements_by_node, route=edge_routes.get(edge_element_id(edge)))
 
     add_legend(builder, spec, placements, content_width)
     add_notes(builder, spec, placements)
@@ -1591,8 +2618,8 @@ def compile_view(model: dict[str, Any], view: dict[str, Any], model_title: str) 
     }
 
     # Copy through view-level rendering options
-    for key in ("subtitle", "diagram_kind", "layout", "direction", "scope",
-                "show_legend", "show_evidence", "groups", "notes"):
+    for key in ("view_mode", "subtitle", "diagram_kind", "layout", "direction", "scope",
+                "overview_style", "show_legend", "show_evidence", "groups", "notes"):
         if key in view:
             compiled[key] = view[key]
 
@@ -1609,6 +2636,52 @@ def short_unique_id(length: int = DEFAULT_UNIQUE_SUFFIX_LENGTH) -> str:
 
 def append_suffix_to_path(path: Path, suffix: str) -> Path:
     return path.with_name(f"{path.stem}-{suffix}{path.suffix}")
+
+
+def view_readability_metrics(view_spec: dict[str, Any]) -> dict[str, float]:
+    nodes = view_spec.get("nodes", [])
+    edges = view_spec.get("edges", [])
+    node_ids = {node["id"] for node in nodes}
+    degree: dict[str, int] = defaultdict(int)
+
+    for edge in edges:
+        source_id = edge.get("from")
+        target_id = edge.get("to")
+        if source_id in node_ids:
+            degree[source_id] += 1
+        if target_id in node_ids and target_id != source_id:
+            degree[target_id] += 1
+
+    max_degree = max(degree.values(), default=0)
+    overloaded_nodes = sum(1 for value in degree.values() if value >= MAX_READABLE_EDGE_DEGREE)
+    edge_density = len(edges) / max(len(nodes), 1)
+    edge_limit = max(int(len(nodes) * 1.5), len(nodes) + 4, DEFAULT_MAX_NODES + 4)
+
+    return {
+        "node_count": len(nodes),
+        "edge_count": len(edges),
+        "edge_density": edge_density,
+        "max_degree": max_degree,
+        "overloaded_nodes": overloaded_nodes,
+        "edge_limit": edge_limit,
+    }
+
+
+def should_split_view(view_spec: dict[str, Any], max_nodes: int) -> bool:
+    metrics = view_readability_metrics(view_spec)
+    if metrics["node_count"] > max_nodes:
+        return True
+
+    risk_flags = 0
+    if metrics["edge_count"] > metrics["edge_limit"]:
+        risk_flags += 1
+    if metrics["edge_density"] >= EDGE_SPLIT_DENSITY:
+        risk_flags += 1
+    if metrics["max_degree"] > MAX_READABLE_EDGE_DEGREE:
+        risk_flags += 1
+    if metrics["overloaded_nodes"] > MAX_READABLE_OVERLOADED_NODES:
+        risk_flags += 1
+    return risk_flags >= 2
 
 
 def resolve_output_base(
@@ -1643,15 +2716,16 @@ def auto_split_view(
     view_spec: dict[str, Any],
     max_nodes: int,
 ) -> list[tuple[str, dict[str, Any]]]:
-    """Split a compiled view into overview + detail views when it exceeds *max_nodes*.
+    """Split a compiled view into overview + detail views when it exceeds budget.
 
-    If the view is within budget, returns it unchanged as a single-element list.
-    Otherwise, returns an overview containing all nodes plus one detail view per
-    group that has two or more nodes.
+    If the view is within the readability budget, returns it unchanged as a
+    single-element list. Otherwise, returns an overview containing all nodes
+    plus one detail view per group that has two or more nodes.
     """
-    nodes = view_spec.get("nodes", [])
-    if len(nodes) <= max_nodes:
+    if not should_split_view(view_spec, max_nodes):
         return [(view_id, view_spec)]
+
+    nodes = view_spec.get("nodes", [])
 
     # --- Build overview (keep all nodes, no split) ---
     overview_spec = dict(view_spec)
@@ -1690,14 +2764,14 @@ def auto_split_view(
             "edges": detail_edges,
         }
         # Carry through rendering options
-        for key in ("subtitle", "diagram_kind", "layout", "direction", "scope",
-                     "show_legend", "show_evidence", "groups", "notes"):
+        for key in ("view_mode", "subtitle", "diagram_kind", "layout", "direction", "scope",
+                     "overview_style", "show_legend", "show_evidence", "groups", "notes"):
             if key in view_spec:
                 detail_spec[key] = view_spec[key]
 
         result.append((f"{view_id}-{slugify(group_id)}", detail_spec))
 
-    return result
+    return result if len(result) > 1 else [(view_id, view_spec)]
 
 
 def compile_spec(spec: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:

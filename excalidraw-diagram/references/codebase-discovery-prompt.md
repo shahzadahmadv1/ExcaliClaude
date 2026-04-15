@@ -24,6 +24,7 @@ Explore the codebase thoroughly and return a structured summary of the REAL comp
 6. **Flow sequence** — the order in which components are called (look at the orchestrator method body)
 7. **Ownership and boundaries** — namespace, project, or folder structure that reveals team ownership or trust boundaries
 8. **Runtime and deployment** — Dockerfiles, Kubernetes manifests, deployment configs, environment variables that reveal where components run
+9. **Interaction direction** — whether external systems are inbound callers, downstream providers, or async backbone infrastructure
 
 ### Search Strategy
 
@@ -51,6 +52,7 @@ For each component and relationship, record:
 - **Owner**: team name, namespace, or project folder that suggests ownership. Use `unknown` if not determinable.
 - **Boundary**: `internal` for components within the system boundary. `external` for third-party services or APIs. `shared` for components used across multiple systems.
 - **Runtime**: deployment target (e.g., `kubernetes`, `lambda`, `vm`, `browser`). Use `unknown` if not determinable from the codebase.
+- **Interaction direction**: note whether external systems initiate requests into the system, receive outbound calls, or serve as async transport so overview layouts can place them correctly.
 
 ## Flow Sequence
 

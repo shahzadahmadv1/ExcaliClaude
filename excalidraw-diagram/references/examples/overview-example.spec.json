@@ -108,6 +108,21 @@
         "runtime": "kubernetes"
       },
       {
+        "id": "event-bus",
+        "label": "Event Bus",
+        "role": "topic",
+        "group": "messaging",
+        "node_type": "Topic",
+        "technology": "Kafka",
+        "description": "Carries order and notification events",
+        "order": 8,
+        "evidence_source": "inferred",
+        "confidence": "medium",
+        "owner": "platform-team",
+        "boundary": "internal",
+        "runtime": "kubernetes"
+      },
+      {
         "id": "product-db",
         "label": "Product DB",
         "role": "database",
@@ -115,7 +130,7 @@
         "node_type": "Database",
         "technology": "PostgreSQL",
         "description": "Stores product catalog",
-        "order": 8,
+        "order": 9,
         "evidence_source": "code",
         "confidence": "high",
         "owner": "catalog-team",
@@ -130,7 +145,7 @@
         "node_type": "Database",
         "technology": "PostgreSQL",
         "description": "Stores orders and payment records",
-        "order": 9,
+        "order": 10,
         "evidence_source": "code",
         "confidence": "high",
         "owner": "orders-team",
@@ -145,7 +160,7 @@
         "node_type": "External",
         "technology": "REST API",
         "description": "Payment processing provider",
-        "order": 10,
+        "order": 11,
         "evidence_source": "code",
         "confidence": "high",
         "owner": "unknown",
@@ -160,7 +175,8 @@
       { "from": "api-gateway", "to": "order-service", "label": "Route /orders", "kind": "sync", "evidence_source": "code", "confidence": "high" },
       { "from": "order-service", "to": "payment-service", "label": "Process payment", "kind": "sync", "evidence_source": "code", "confidence": "high" },
       { "from": "payment-service", "to": "stripe", "label": "Charge card", "kind": "sync", "evidence_source": "code", "confidence": "high" },
-      { "from": "order-service", "to": "notification-service", "label": "Order confirmed", "kind": "async", "evidence_source": "inferred", "confidence": "medium" },
+      { "from": "order-service", "to": "event-bus", "label": "Publish order event", "kind": "publish", "evidence_source": "inferred", "confidence": "medium" },
+      { "from": "event-bus", "to": "notification-service", "label": "Deliver notification event", "kind": "subscribe", "evidence_source": "inferred", "confidence": "medium" },
       { "from": "catalog-service", "to": "product-db", "label": "Query products", "kind": "read", "evidence_source": "code", "confidence": "high" },
       { "from": "order-service", "to": "order-db", "label": "Read/write orders", "kind": "write", "evidence_source": "code", "confidence": "high" }
     ],
@@ -174,13 +190,15 @@
       "title": "E-Commerce Platform Overview",
       "diagram_kind": "architecture",
       "layout": "layers",
+      "overview_style": "core-with-sides",
       "show_legend": true,
       "groups": [
         { "id": "frontend", "label": "Frontend" },
         { "id": "edge", "label": "Edge" },
         { "id": "services", "label": "Services" },
         { "id": "data", "label": "Data" },
-        { "id": "external", "label": "External" }
+        { "id": "messaging", "label": "Async Backbone", "placement": "side-right" },
+        { "id": "external", "label": "External", "placement": "side-right" }
       ],
       "notes": [
         { "text": "Overview of all major platform components. Use drill-down views for service internals." }

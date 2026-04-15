@@ -1,0 +1,126 @@
+{
+  "title": "Connector Stress Flow",
+  "subtitle": "Dense connector-routing fixture for regression checks",
+  "diagram_kind": "dynamic",
+  "layout": "flow",
+  "direction": "vertical",
+  "show_legend": true,
+  "groups": [
+    { "id": "ingress", "label": "Ingress" },
+    { "id": "workers", "label": "Workers" },
+    { "id": "support", "label": "Support Libraries" },
+    { "id": "storage", "label": "Storage / Queues" }
+  ],
+  "nodes": [
+    {
+      "id": "api-gateway",
+      "label": "API Gateway",
+      "role": "api",
+      "group": "ingress",
+      "description": "Accepts uploads and settlement commands."
+    },
+    {
+      "id": "scheduler",
+      "label": "Scheduler",
+      "role": "infrastructure",
+      "group": "ingress",
+      "description": "Triggers periodic finalisation runs."
+    },
+    {
+      "id": "settlement-intake",
+      "label": "Settlement Intake",
+      "role": "service",
+      "group": "workers",
+      "description": "Validates uploads and creates intake records."
+    },
+    {
+      "id": "settlement-worker",
+      "label": "Settlement Worker",
+      "role": "service",
+      "group": "workers",
+      "description": "Processes records and updates batches."
+    },
+    {
+      "id": "settlement-finalizer",
+      "label": "Settlement Finalizer",
+      "role": "service",
+      "group": "workers",
+      "description": "Closes batches and marks terminal outcomes."
+    },
+    {
+      "id": "infra-library",
+      "label": "Infrastructure Library",
+      "role": "library",
+      "group": "support",
+      "description": "Shared adapters for persistence and events."
+    },
+    {
+      "id": "domain-library",
+      "label": "Domain Library",
+      "role": "library",
+      "group": "support",
+      "description": "Settlement rules and reconciliation logic."
+    },
+    {
+      "id": "audit-library",
+      "label": "Audit Library",
+      "role": "library",
+      "group": "support",
+      "description": "Captures trace records for batch actions."
+    },
+    {
+      "id": "intake-queue",
+      "label": "Intake Queue",
+      "role": "queue",
+      "group": "storage",
+      "description": "Buffers new settlement intake jobs."
+    },
+    {
+      "id": "records-table",
+      "label": "Records Table",
+      "role": "database",
+      "group": "storage",
+      "description": "Stores row-level settlement records."
+    },
+    {
+      "id": "batches-table",
+      "label": "Batches Table",
+      "role": "database",
+      "group": "storage",
+      "description": "Stores batch metadata and lifecycle state."
+    },
+    {
+      "id": "users-table",
+      "label": "Users Table",
+      "role": "database",
+      "group": "storage",
+      "description": "Stores settlement portal users."
+    }
+  ],
+  "edges": [
+    { "from": "api-gateway", "to": "settlement-intake", "label": "Upload CSV", "kind": "sync", "sequence": 1 },
+    { "from": "api-gateway", "to": "intake-queue", "label": "Enqueue file", "kind": "async", "sequence": 2 },
+    { "from": "scheduler", "to": "settlement-worker", "label": "Start reconciliation run", "kind": "async", "sequence": 3 },
+    { "from": "settlement-intake", "to": "settlement-worker", "label": "Create processing job", "kind": "async", "sequence": 4 },
+    { "from": "settlement-worker", "to": "settlement-finalizer", "label": "Close completed batches", "kind": "sync", "sequence": 5 },
+    { "from": "settlement-intake", "to": "infra-library", "label": "Use persistence adapters", "kind": "imports" },
+    { "from": "settlement-worker", "to": "infra-library", "label": "Reuse shared adapters", "kind": "imports" },
+    { "from": "settlement-worker", "to": "domain-library", "label": "Apply reconciliation rules", "kind": "depends-on" },
+    { "from": "settlement-worker", "to": "audit-library", "label": "Record trace events", "kind": "depends-on" },
+    { "from": "infra-library", "to": "records-table", "label": "Write records", "kind": "write" },
+    { "from": "infra-library", "to": "batches-table", "label": "Update batches", "kind": "write" },
+    { "from": "domain-library", "to": "records-table", "label": "Read settlement rows", "kind": "read" },
+    { "from": "audit-library", "to": "records-table", "label": "Append audit entries", "kind": "write" },
+    { "from": "settlement-worker", "to": "records-table", "label": "Patch record status", "kind": "write" },
+    { "from": "settlement-worker", "to": "batches-table", "label": "Persist batch progress", "kind": "write" },
+    { "from": "settlement-worker", "to": "users-table", "label": "Read portal users", "kind": "read" },
+    { "from": "settlement-finalizer", "to": "batches-table", "label": "Close open batches", "kind": "write" },
+    { "from": "settlement-finalizer", "to": "records-table", "label": "Mark terminal outcomes", "kind": "write" },
+    { "from": "settlement-finalizer", "to": "users-table", "label": "Resolve notification recipients", "kind": "read" }
+  ],
+  "notes": [
+    {
+      "text": "Use this fixture when changing connector routing or readability heuristics. The dense worker-to-library-to-storage edges should remain separable."
+    }
+  ]
+}

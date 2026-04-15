@@ -156,6 +156,7 @@ A view selects a subset of model entities and relationships and renders them as 
   "diagram_kind": "dynamic",
   "layout": "flow",
   "direction": "vertical",
+  "overview_style": "auto",
   "scope": "ExcaliClaude sample",
   "show_legend": true,
   "entity_ids": null,
@@ -173,6 +174,7 @@ A view selects a subset of model entities and relationships and renders them as 
 | `diagram_kind` | No | `dynamic`, `container`, `component`, `context`, `architecture`, `deployment`, `data-flow`, `trust-boundary`, `dependency-map` | Abstraction level |
 | `layout` | No | `flow`, `layers` | Layout algorithm |
 | `direction` | No | `vertical`, `horizontal` | Flow direction |
+| `overview_style` | No | `auto`, `pure-layers`, `core-with-sides` | For layered overview/context/container views, whether messaging and external systems stay as rows or move to side columns |
 | `scope` | No | string | Optional scope text for the subtitle |
 | `show_legend` | No | boolean | Hide only when the diagram is trivially obvious |
 | `show_evidence` | No | boolean | Show or hide evidence summary cues when evidence metadata is present (default: `true`) |
@@ -224,6 +226,7 @@ When the spec omits `model` and `views`, it is treated as a single-view spec. Th
 | `diagram_kind` | No | `dynamic`, `container`, `component`, `context`, `architecture`, `deployment`, `data-flow`, `trust-boundary`, `dependency-map` | Controls the subtitle and the intended abstraction |
 | `layout` | No | `flow`, `layers` | `flow` for runtime/request paths, `layers` for static architecture |
 | `direction` | No | `vertical`, `horizontal` | Flow direction for `layout: flow` |
+| `overview_style` | No | `auto`, `pure-layers`, `core-with-sides` | Hybrid overview behavior for `layout: layers` |
 | `scope` | No | string | Optional scope text for the subtitle |
 | `show_legend` | No | boolean | Hide only when the diagram is trivially obvious |
 | `show_evidence` | No | boolean | Show or hide evidence summary cues when evidence metadata is present (default: `true`) |
@@ -238,9 +241,10 @@ Use groups to create swimlanes or layers. Order them exactly as you want them re
 
 ```json
 [
-  { "id": "client", "label": "Client" },
+  { "id": "client", "label": "Client", "placement": "side-left" },
   { "id": "services", "label": "Application" },
-  { "id": "data", "label": "Data" }
+  { "id": "data", "label": "Data" },
+  { "id": "messaging", "label": "Async Backbone", "placement": "side-right" }
 ]
 ```
 
@@ -249,6 +253,7 @@ Fields:
 - `id`: machine-safe identifier
 - `label`: human-readable container title
 - `strokeColor`: optional custom border color
+- `placement`: optional `layer`, `side-left`, or `side-right`
 
 ## Nodes
 
@@ -347,6 +352,8 @@ Use short relationship labels that explain intent. Do not leave important arrows
 - Split large flows into overview + detail diagrams instead of cramming everything into one canvas.
 - Use `layout: flow` for "what happens when" questions.
 - Use `layout: layers` for "what exists and how it is grouped" questions.
+- For layered architecture overviews, prefer `overview_style: core-with-sides` when external systems or messaging would otherwise become full-width rows.
+- Use side placements for communication partners and async backbones, not for core owned tiers.
 - Use real class/service/system names when the codebase was explored.
 - Keep descriptions short enough to fit in 2-3 lines.
 - When producing multiple views from one model, give each view a unique `view_id`.

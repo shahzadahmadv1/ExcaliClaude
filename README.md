@@ -55,6 +55,7 @@ Instead of asking Claude to freehand raw Excalidraw geometry, the workflow is:
 - **Codebase-aware discovery**: can explore an existing repo and use real names instead of placeholders.
 - **Evidence-aware modeling**: entities and relationships can carry `code`, `inferred`, or `user-specified` evidence metadata.
 - **Deterministic builder**: layout, node sizing, legends, and label placement come from code instead of prompt-only geometry.
+- **Hybrid overview layout**: architecture overviews can keep core tiers centered while moving external systems and async backbones to side columns.
 - **Automatic split behavior**: large views can split into overview plus detail artifacts.
 - **Multiple diagram kinds**: dynamic, container, component, context, architecture, deployment, data-flow, trust-boundary, and dependency-map.
 - **Secondary Mermaid export**: emits text-native diagram output from the same compiled view data.
@@ -282,6 +283,7 @@ python excalidraw-diagram/references/export_mermaid.py \
 - `focused-flow-example.spec.json` - focused-flow mode
 - `drill-down-example.spec.json` - drill-down mode
 - `scenario-pack-example.spec.json` - overview plus multiple details
+- `connector-stress-example.spec.json` - dense routing fixture for connector readability
 
 ---
 

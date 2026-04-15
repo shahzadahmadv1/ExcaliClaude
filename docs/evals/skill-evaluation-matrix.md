@@ -20,6 +20,7 @@ For each prompt:
 - Nodes explain role and responsibility, not just names.
 - The output is explicitly marked as codebase-accurate or conceptual.
 - Large scopes split into overview plus detail rather than one crowded canvas.
+- Connectors remain readable instead of collapsing into one shared bundle.
 - Validation passes.
 - Preview rendering failure degrades cleanly when Playwright is unavailable.
 
@@ -77,7 +78,7 @@ Generate an architecture overview for a SaaS platform with web app, API gateway,
 Expected behavior:
 
 - Chooses `architecture` or `container`, not `dynamic`.
-- Uses grouped layers with a readable legend.
+- Uses grouped layers for owned internals, with side placement for external systems or messaging when that improves readability.
 - Shows only relationships that help explain the platform.
 
 Failure smells:
@@ -85,6 +86,7 @@ Failure smells:
 - Sequence numbers in a static architecture view.
 - Every possible dependency included.
 - Mixed runtime and structural concerns in one diagram.
+- External systems or queues drawn as full-width tiers when they are really communication partners.
 
 ### 4. Component View Inside One Service
 
@@ -118,6 +120,7 @@ Expected behavior:
 - Produces an overview first.
 - Splits dense phases into follow-up detail diagrams or offers to do so.
 - Keeps each output readable.
+- Connector corridors stay separable when several relationships cross the same row or lane.
 
 Failure smells:
 
@@ -285,6 +288,26 @@ Failure smells:
 - Entity IDs change between views.
 - No cross-reference between overview and drill-down artifacts.
 
+### 14. Connector Routing Stress
+
+Prompt:
+
+```text
+Create a backend settlement architecture view with intake, worker, finalizer, shared libraries, queue, records table, batches table, and users table. Show all write/read dependencies.
+```
+
+Expected behavior:
+
+- Uses a single readable view when the scope is still small enough.
+- Parallel connectors use distinct channels or attachment points instead of one stacked midpoint.
+- Labels remain legible around the busiest connector bands.
+
+Failure smells:
+
+- Multiple arrows overlap along the same central trunk.
+- Relationship labels pile up on top of one another.
+- The validator gives no warning even though connector density is obviously too high.
+
 ## Suggested Release Gate
 
 Before merging prompt changes:
@@ -296,3 +319,4 @@ Before merging prompt changes:
 - Run one multi-view scenario pack prompt (eval 9).
 - Run one evidence-aware discovery prompt (eval 10).
 - Run one Mermaid export prompt (eval 11).
+- Run one connector-density case (eval 14 or `connector-stress-example.spec.json`).

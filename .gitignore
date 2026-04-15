@@ -8,3 +8,8 @@ dist/
 build/
 .DS_Store
 Thumbs.db
+.ai/
+.claude/
+docs/diagrams/*.excalidraw
+*.bak
+*.log

@@ -120,6 +120,16 @@ Use a C4-inspired level within each view:
 - `trust-boundary` for security zones and trust perimeters
 - `dependency-map` for static service or package dependencies
 
+### Architecture Overview Defaults
+
+For `overview` views using `layout: layers`:
+
+- keep owned ingress, processing, and persistence groups as horizontal core rows
+- put external systems on the left or right when they are communication partners rather than internal tiers
+- put queues, topics, and async backbones on the right by default instead of drawing them as a full-width messaging row
+- use `overview_style: core-with-sides` when the diagram mixes internal layers with external systems or messaging
+- only keep `pure-layers` when the user explicitly wants a stacked tier diagram
+
 If the user asks for multiple levels at once, use `scenario-pack` mode to generate the higher-level overview first plus detail views.
 
 ## Required References
@@ -179,6 +189,7 @@ Each view must include:
 - `view_mode` — `overview`, `focused-flow`, `drill-down`, or `scenario-pack`
 - `diagram_kind` — the abstraction level
 - `layout` and `direction` for flow diagrams
+- `overview_style` for layered overview/container/context views when side columns help readability
 - ordered `groups`
 - `entity_ids` — subset of model entities to include (null means all)
 

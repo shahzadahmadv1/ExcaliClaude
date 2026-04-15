@@ -57,6 +57,12 @@ The deterministic layout engine. When making changes:
     excalidraw-diagram/references/examples/scenario-pack-example.spec.json \
     --output test-scenario.excalidraw \
     --unique-output
+
+  # Dense routing regression
+  python excalidraw-diagram/references/build_excalidraw_diagram.py \
+    excalidraw-diagram/references/examples/connector-stress-example.spec.json \
+    --output test-routing.excalidraw \
+    --unique-output
   ```
 
 - Use `--unique-output` when you want a short run suffix appended automatically so repeated diagram runs do not overwrite each other.
@@ -122,6 +128,7 @@ Before submitting a PR, verify:
 - [ ] Build passes on `enhanced-auth-flow.spec.json` (single-view legacy)
 - [ ] Build passes on `multi-view-auth.spec.json` (multi-view)
 - [ ] Build passes on `scenario-pack-example.spec.json` (multi-artifact)
+- [ ] Build passes on `connector-stress-example.spec.json` (dense routing fixture)
 - [ ] Validation passes on all generated `.excalidraw` files
 - [ ] Mermaid export runs without errors on at least one example
 - [ ] If changing the skill prompt, run the evaluation matrix in `docs/evals/skill-evaluation-matrix.md`
